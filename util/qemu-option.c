@@ -646,6 +646,7 @@ static void opt_set(QemuOpts *opts, const char *name, const char *value,
     }
     opt->desc = desc;
     opt->str = g_strdup(value);
+    opt->str = g_strdup(value ?: desc->def_value_str);
     qemu_opt_parse(opt, &local_err);
     if (error_is_set(&local_err)) {
         error_propagate(errp, local_err);
@@ -860,16 +861,36 @@ void qemu_opts_del(QemuOpts *opts)
     g_free(opts);
 }
 
-int qemu_opts_print(QemuOpts *opts, void *dummy)
+int qemu_opts_print(QemuOpts *opts)
 {
     QemuOpt *opt;
+    QemuOptDesc *desc = opts->list->desc;
 
-    fprintf(stderr, "%s: %s:", opts->list->name,
-            opts->id ? opts->id : "<noid>");
-    QTAILQ_FOREACH(opt, &opts->head, next) {
-        fprintf(stderr, " %s=\"%s\"", opt->name, opt->str);
+    if (desc[0].name == NULL) {
+        QTAILQ_FOREACH(opt, &opts->head, next) {
+            printf("%s=\"%s\" ", opt->name, opt->str);
+        }
+        return 0;
     }
-    fprintf(stderr, "\n");
+    for (; desc && desc->name; desc++) {
+        const char *value = desc->def_value_str;
+        QemuOpt *opt;
+
+        opt = qemu_opt_find(opts, desc->name);
+        if (opt) {
+            value = opt->str;
+        }
+
+        if (!value) {
+            continue;
+        }
+
+        if (desc->type == QEMU_OPT_STRING) {
+            printf("%s='%s' ", desc->name, value);
+        } else {
+            printf("%s=%s ", desc->name, value);
+        }
+    }
     return 0;
 }
 
