@@ -1201,3 +1201,76 @@ int qemu_opts_foreach(QemuOptsList *list, qemu_opts_loopfunc func, void *opaque,
     loc_pop(&loc);
     return rc;
 }
+
+static size_t count_opts_list(QemuOptsList *list)
+{
+    size_t i;
+
+    for (i = 0; list && list->desc[i].name; i++) {
+        ;
+    }
+
+    return i;
+}
+
+/* Create a new QemuOptsList with a desc of the merge of the first
+ * and second. It will allocate space for one new QemuOptsList plus
+ * enough space for QemuOptDesc in first and second QemuOptsList.
+ * First argument's QemuOptDesc members take precedence over second's.
+ * The result's name and implied_opt_name are not copied from them.
+ * Both merge_lists should not be set. Both lists can be NULL.
+ */
+QemuOptsList *qemu_opts_append(QemuOptsList *first,
+                               QemuOptsList *second)
+{
+    size_t num_first_opts, num_second_opts;
+    QemuOptsList *dest = NULL;
+    int i;
+    int index = 0;
+    QemuOptsList *p = first;
+
+    num_first_opts = count_opts_list(first);
+    num_second_opts = count_opts_list(second);
+
+    dest = g_malloc0(sizeof(QemuOptsList)
+        + (num_first_opts + num_second_opts + 1) * sizeof(QemuOptDesc));
+
+    dest->name = "append_opts_list";
+    dest->implied_opt_name = NULL;
+    assert((!first || !first->merge_lists)
+           && (!second || !second->merge_lists));
+    QTAILQ_INIT(&dest->head);
+
+    for (i = 0; p && p->desc[i].name; i++) {
+        if (!find_desc_by_name(dest->desc, p->desc[i].name)) {
+            dest->desc[index].name = p->desc[i].name;
+            dest->desc[index].help = p->desc[i].help;
+            dest->desc[index].type = p->desc[i].type;
+            dest->desc[index].def_value_str =  p->desc[i].def_value_str;
+            index++;
+        }
+        if (p == first && p && !p->desc[i].name) {
+            p = second;
+            i = 0;
+        }
+    }
+    dest->desc[index].name = NULL;
+    return dest;
+}
+
+/* free a QemuOptsList, can accept NULL as arguments */
+void qemu_opts_free(QemuOptsList *list)
+{
+    g_free(list);
+}
+
+void qemu_opts_print_help(QemuOptsList *list)
+{
+    int i;
+    printf("Supported options:\n");
+    for (i = 0; list && list->desc[i].name; i++) {
+        printf("%-16s %s\n", list->desc[i].name,
+               list->desc[i].help ?
+               list->desc[i].help : "No description available");
+    }
+}
