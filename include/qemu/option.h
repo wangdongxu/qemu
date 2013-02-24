@@ -158,4 +158,7 @@ int qemu_opts_print(QemuOpts *opts);
 int qemu_opts_foreach(QemuOptsList *list, qemu_opts_loopfunc func, void *opaque,
                       int abort_on_failure);
 
+QemuOptsList *qemu_opts_append(QemuOptsList *first, QemuOptsList *second);
+void qemu_opts_free(QemuOptsList *list);
+void qemu_opts_print_help(QemuOptsList *list);
 #endif
