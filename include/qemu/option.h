@@ -96,6 +96,7 @@ typedef struct QemuOptDesc {
     const char *name;
     enum QemuOptType type;
     const char *help;
+    const char *def_value_str;
 } QemuOptDesc;
 
 struct QemuOptsList {
@@ -153,7 +154,7 @@ QDict *qemu_opts_to_qdict(QemuOpts *opts, QDict *qdict);
 void qemu_opts_absorb_qdict(QemuOpts *opts, QDict *qdict, Error **errp);
 
 typedef int (*qemu_opts_loopfunc)(QemuOpts *opts, void *opaque);
-int qemu_opts_print(QemuOpts *opts, void *dummy);
+int qemu_opts_print(QemuOpts *opts);
 int qemu_opts_foreach(QemuOptsList *list, qemu_opts_loopfunc func, void *opaque,
                       int abort_on_failure);
 
