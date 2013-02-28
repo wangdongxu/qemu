@@ -365,7 +365,6 @@ BlockDriver *bdrv_find_whitelisted_format(const char *format_name,
 typedef struct CreateCo {
     BlockDriver *drv;
     char *filename;
-    QEMUOptionParameter *options;
     QemuOpts *opts;
     int ret;
 } CreateCo;
