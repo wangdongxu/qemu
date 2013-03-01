@@ -210,6 +210,33 @@ int path_has_protocol(const char *path)
     return *p == ':';
 }
 
+/**
+ * Read a string of known length from the image file
+ *
+ * @bs:         Image file
+ * @offset:     File offset to start of string, in bytes
+ * @n:          String length in bytes
+ * @buf:        Destination buffer
+ * @buflen:     Destination buffer length in bytes
+ * @ret:        0 on success, -errno on failure
+ *
+ * The string is NUL-terminated.
+ */
+int bdrv_read_string(BlockDriverState *bs, uint64_t offset, size_t n,
+                     char *buf, size_t buflen)
+{
+    int ret;
+    if (n >= buflen) {
+        return -EINVAL;
+    }
+    ret = bdrv_pread(bs, offset, buf, n);
+    if (ret < 0) {
+        return ret;
+    }
+    buf[n] = '\0';
+    return 0;
+}
+
 int path_is_absolute(const char *path)
 {
 #ifdef _WIN32
