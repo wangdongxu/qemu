@@ -98,6 +98,9 @@ typedef struct QCowSnapshot {
     uint64_t vm_clock_nsec;
 } QCowSnapshot;
 
+struct BlockCache;
+typedef struct BlockCache BlockCache;
+
 typedef struct Qcow2UnknownHeaderExtension {
     uint32_t magic;
     uint32_t len;
