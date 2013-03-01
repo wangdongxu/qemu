@@ -446,8 +446,11 @@ static int qcow2_open(BlockDriverState *bs, QDict *options, int flags)
     }
 
     /* alloc L2 table/refcount block cache */
-    s->l2_table_cache = qcow2_cache_create(bs, L2_CACHE_SIZE);
-    s->refcount_block_cache = qcow2_cache_create(bs, REFCOUNT_CACHE_SIZE);
+    s->l2_table_cache = block_cache_create(bs, L2_CACHE_SIZE,
+                                           s->cluster_size, BLOCK_TABLE_L2);
+    s->refcount_block_cache = block_cache_create(bs, REFCOUNT_CACHE_SIZE,
+                                                 s->cluster_size,
+                                                 BLOCK_TABLE_REF);
 
     s->cluster_cache = g_malloc(s->cluster_size);
     /* one more sector for decompressed data alignment */
@@ -548,7 +551,7 @@ static int qcow2_open(BlockDriverState *bs, QDict *options, int flags)
     qcow2_refcount_close(bs);
     g_free(s->l1_table);
     if (s->l2_table_cache) {
-        qcow2_cache_destroy(bs, s->l2_table_cache);
+        block_cache_destroy(bs, s->l2_table_cache);
     }
     g_free(s->cluster_cache);
     qemu_vfree(s->cluster_data);
@@ -913,13 +916,13 @@ static void qcow2_close(BlockDriverState *bs)
     BDRVQcowState *s = bs->opaque;
     g_free(s->l1_table);
 
-    qcow2_cache_flush(bs, s->l2_table_cache);
-    qcow2_cache_flush(bs, s->refcount_block_cache);
+    block_cache_flush(bs, s->l2_table_cache);
+    block_cache_flush(bs, s->refcount_block_cache);
 
     qcow2_mark_clean(bs);
 
-    qcow2_cache_destroy(bs, s->l2_table_cache);
-    qcow2_cache_destroy(bs, s->refcount_block_cache);
+    block_cache_destroy(bs, s->l2_table_cache);
+    block_cache_destroy(bs, s->refcount_block_cache);
 
     g_free(s->unknown_header_fields);
     cleanup_unknown_header_ext(bs);
@@ -1596,14 +1599,14 @@ static coroutine_fn int qcow2_co_flush_to_os(BlockDriverState *bs)
     int ret;
 
     qemu_co_mutex_lock(&s->lock);
-    ret = qcow2_cache_flush(bs, s->l2_table_cache);
+    ret = block_cache_flush(bs, s->l2_table_cache);
     if (ret < 0) {
         qemu_co_mutex_unlock(&s->lock);
         return ret;
     }
 
     if (qcow2_need_accurate_refcounts(s)) {
-        ret = qcow2_cache_flush(bs, s->refcount_block_cache);
+        ret = block_cache_flush(bs, s->refcount_block_cache);
         if (ret < 0) {
             qemu_co_mutex_unlock(&s->lock);
             return ret;
