@@ -98,6 +98,9 @@ typedef struct QCowSnapshot {
     uint64_t vm_clock_nsec;
 } QCowSnapshot;
 
+struct BlockCache;
+typedef struct BlockCache BlockCache;
+
 typedef struct Qcow2UnknownHeaderExtension {
     uint32_t magic;
     uint32_t len;
@@ -388,8 +391,5 @@ int qcow2_snapshot_load_tmp(BlockDriverState *bs, const char *snapshot_name);
 
 void qcow2_free_snapshots(BlockDriverState *bs);
 int qcow2_read_snapshots(BlockDriverState *bs);
-
-/* qcow2-cache.c functions */
-
 
 #endif
