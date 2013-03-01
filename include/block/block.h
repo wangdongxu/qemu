@@ -173,6 +173,8 @@ int bdrv_pwrite_sync(BlockDriverState *bs, int64_t offset,
     const void *buf, int count);
 int coroutine_fn bdrv_co_readv(BlockDriverState *bs, int64_t sector_num,
     int nb_sectors, QEMUIOVector *qiov);
+int bdrv_read_string(BlockDriverState *bs, uint64_t offset, size_t n,
+                     char *buf, size_t buflen);
 int coroutine_fn bdrv_co_copy_on_readv(BlockDriverState *bs,
     int64_t sector_num, int nb_sectors, QEMUIOVector *qiov);
 int coroutine_fn bdrv_co_writev(BlockDriverState *bs, int64_t sector_num,

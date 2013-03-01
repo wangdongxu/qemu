@@ -217,33 +217,6 @@ static bool qed_is_image_size_valid(uint64_t image_size, uint32_t cluster_size,
 }
 
 /**
- * Read a string of known length from the image file
- *
- * @file:       Image file
- * @offset:     File offset to start of string, in bytes
- * @n:          String length in bytes
- * @buf:        Destination buffer
- * @buflen:     Destination buffer length in bytes
- * @ret:        0 on success, -errno on failure
- *
- * The string is NUL-terminated.
- */
-static int qed_read_string(BlockDriverState *file, uint64_t offset, size_t n,
-                           char *buf, size_t buflen)
-{
-    int ret;
-    if (n >= buflen) {
-        return -EINVAL;
-    }
-    ret = bdrv_pread(file, offset, buf, n);
-    if (ret < 0) {
-        return ret;
-    }
-    buf[n] = '\0';
-    return 0;
-}
-
-/**
  * Allocate new clusters
  *
  * @s:          QED state
@@ -437,9 +410,10 @@ static int bdrv_qed_open(BlockDriverState *bs, QDict *options, int flags)
             return -EINVAL;
         }
 
-        ret = qed_read_string(bs->file, s->header.backing_filename_offset,
-                              s->header.backing_filename_size, bs->backing_file,
-                              sizeof(bs->backing_file));
+        ret = bdrv_read_string(bs->file, s->header.backing_filename_offset,
+                               s->header.backing_filename_size,
+                               bs->backing_file,
+                               sizeof(bs->backing_file));
         if (ret < 0) {
             return ret;
         }
