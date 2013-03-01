@@ -99,7 +99,7 @@ static int get_refcount(BlockDriverState *bs, int64_t cluster_index)
         return 0;
 
     ret = block_cache_get(bs, s->refcount_block_cache, refcount_block_offset,
-        (void**) &refcount_block);
+        (void **) &refcount_block);
     if (ret < 0) {
         return ret;
     }
@@ -109,7 +109,7 @@ static int get_refcount(BlockDriverState *bs, int64_t cluster_index)
     refcount = be16_to_cpu(refcount_block[block_index]);
 
     ret = block_cache_put(bs, s->refcount_block_cache,
-        (void**) &refcount_block);
+        (void **) &refcount_block);
     if (ret < 0) {
         return ret;
     }
@@ -172,7 +172,7 @@ static int alloc_refcount_block(BlockDriverState *bs,
         /* If it's already there, we're done */
         if (refcount_block_offset) {
              return load_refcount_block(bs, refcount_block_offset,
-                 (void**) refcount_block);
+                 (void **) refcount_block);
         }
     }
 
@@ -221,7 +221,7 @@ static int alloc_refcount_block(BlockDriverState *bs,
     if (in_same_refcount_block(s, new_block, cluster_index << s->cluster_bits)) {
         /* Zero the new refcount block before updating it */
         ret = block_cache_get_empty(bs, s->refcount_block_cache, new_block,
-            (void**) refcount_block);
+            (void **) refcount_block);
         if (ret < 0) {
             goto fail_block;
         }
@@ -248,7 +248,7 @@ static int alloc_refcount_block(BlockDriverState *bs,
         /* Initialize the new refcount block only after updating its refcount,
          * update_refcount uses the refcount cache itself */
         ret = block_cache_get_empty(bs, s->refcount_block_cache, new_block,
-            (void**) refcount_block);
+            (void **) refcount_block);
         if (ret < 0) {
             goto fail_block;
         }
@@ -279,7 +279,8 @@ static int alloc_refcount_block(BlockDriverState *bs,
         return 0;
     }
 
-    ret = block_cache_put(bs, s->refcount_block_cache, (void**) refcount_block);
+    ret = block_cache_put(bs, s->refcount_block_cache,
+                          (void **) refcount_block);
     if (ret < 0) {
         goto fail_block;
     }
@@ -402,7 +403,7 @@ static int alloc_refcount_block(BlockDriverState *bs,
     qcow2_free_clusters(bs, old_table_offset, old_table_size * sizeof(uint64_t));
     s->free_cluster_index = old_free_cluster_index;
 
-    ret = load_refcount_block(bs, new_block, (void**) refcount_block);
+    ret = load_refcount_block(bs, new_block, (void **) refcount_block);
     if (ret < 0) {
         return ret;
     }
@@ -413,7 +414,7 @@ fail_table:
     g_free(new_table);
 fail_block:
     if (*refcount_block != NULL) {
-        block_cache_put(bs, s->refcount_block_cache, (void**) refcount_block);
+        block_cache_put(bs, s->refcount_block_cache, (void **) refcount_block);
     }
     return ret;
 }
@@ -457,7 +458,7 @@ static int QEMU_WARN_UNUSED_RESULT update_refcount(BlockDriverState *bs,
         if (table_index != old_table_index) {
             if (refcount_block) {
                 ret = block_cache_put(bs, s->refcount_block_cache,
-                    (void**) &refcount_block);
+                    (void **) &refcount_block);
                 if (ret < 0) {
                     goto fail;
                 }
@@ -494,7 +495,7 @@ fail:
     if (refcount_block) {
         int wret;
         wret = block_cache_put(bs, s->refcount_block_cache,
-            (void**) &refcount_block);
+            (void **) &refcount_block);
         if (wret < 0) {
             return ret < 0 ? ret : wret;
         }
@@ -768,7 +769,7 @@ int qcow2_update_snapshot_refcount(BlockDriverState *bs,
             l2_offset &= L1E_OFFSET_MASK;
 
             ret = block_cache_get(bs, s->l2_table_cache, l2_offset,
-                (void**) &l2_table);
+                (void **) &l2_table);
             if (ret < 0) {
                 goto fail;
             }
@@ -815,12 +816,13 @@ int qcow2_update_snapshot_refcount(BlockDriverState *bs,
                                 s->refcount_block_cache);
                         }
                         l2_table[j] = cpu_to_be64(offset);
-                        block_cache_entry_mark_dirty(s->l2_table_cache, l2_table);
+                        block_cache_entry_mark_dirty(s->l2_table_cache,
+                                                     l2_table);
                     }
                 }
             }
 
-            ret = block_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+            ret = block_cache_put(bs, s->l2_table_cache, (void **) &l2_table);
             if (ret < 0) {
                 goto fail;
             }
@@ -847,7 +849,7 @@ int qcow2_update_snapshot_refcount(BlockDriverState *bs,
     ret = bdrv_flush(bs);
 fail:
     if (l2_table) {
-        block_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+        block_cache_put(bs, s->l2_table_cache, (void **) &l2_table);
     }
 
     /* Update L1 only if it isn't deleted anyway (addend = -1) */

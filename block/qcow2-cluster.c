@@ -125,7 +125,8 @@ static int l2_load(BlockDriverState *bs, uint64_t l2_offset,
     BDRVQcowState *s = bs->opaque;
     int ret;
 
-    ret = block_cache_get(bs, s->l2_table_cache, l2_offset, (void**) l2_table);
+    ret = block_cache_get(bs, s->l2_table_cache, l2_offset,
+                          (void **) l2_table);
 
     return ret;
 }
@@ -194,7 +195,8 @@ static int l2_allocate(BlockDriverState *bs, int l1_index, uint64_t **table)
     /* allocate a new entry in the l2 cache */
 
     trace_qcow2_l2_allocate_get_empty(bs, l1_index);
-    ret = block_cache_get_empty(bs, s->l2_table_cache, l2_offset, (void**) table);
+    ret = block_cache_get_empty(bs, s->l2_table_cache, l2_offset,
+                                (void **) table);
     if (ret < 0) {
         return ret;
     }
@@ -211,14 +213,14 @@ static int l2_allocate(BlockDriverState *bs, int l1_index, uint64_t **table)
         BLKDBG_EVENT(bs->file, BLKDBG_L2_ALLOC_COW_READ);
         ret = block_cache_get(bs, s->l2_table_cache,
             old_l2_offset & L1E_OFFSET_MASK,
-            (void**) &old_table);
+            (void **) &old_table);
         if (ret < 0) {
             goto fail;
         }
 
         memcpy(l2_table, old_table, s->cluster_size);
 
-        ret = block_cache_put(bs, s->l2_table_cache, (void**) &old_table);
+        ret = block_cache_put(bs, s->l2_table_cache, (void **) &old_table);
         if (ret < 0) {
             goto fail;
         }
@@ -248,7 +250,7 @@ static int l2_allocate(BlockDriverState *bs, int l1_index, uint64_t **table)
 
 fail:
     trace_qcow2_l2_allocate_done(bs, l1_index, ret);
-    block_cache_put(bs, s->l2_table_cache, (void**) table);
+    block_cache_put(bs, s->l2_table_cache, (void **) table);
     s->l1_table[l1_index] = old_l2_offset;
     return ret;
 }
@@ -484,7 +486,7 @@ int qcow2_get_cluster_offset(BlockDriverState *bs, uint64_t offset,
         abort();
     }
 
-    block_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+    block_cache_put(bs, s->l2_table_cache, (void **) &l2_table);
 
     nb_available = (c * s->cluster_sectors);
 
@@ -594,13 +596,13 @@ uint64_t qcow2_alloc_compressed_cluster_offset(BlockDriverState *bs,
      * allocated. */
     cluster_offset = be64_to_cpu(l2_table[l2_index]);
     if (cluster_offset & L2E_OFFSET_MASK) {
-        block_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+        block_cache_put(bs, s->l2_table_cache, (void **) &l2_table);
         return 0;
     }
 
     cluster_offset = qcow2_alloc_bytes(bs, compressed_size);
     if (cluster_offset < 0) {
-        block_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+        block_cache_put(bs, s->l2_table_cache, (void **) &l2_table);
         return 0;
     }
 
@@ -617,7 +619,7 @@ uint64_t qcow2_alloc_compressed_cluster_offset(BlockDriverState *bs,
     BLKDBG_EVENT(bs->file, BLKDBG_L2_UPDATE_COMPRESSED);
     block_cache_entry_mark_dirty(s->l2_table_cache, l2_table);
     l2_table[l2_index] = cpu_to_be64(cluster_offset);
-    ret = block_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+    ret = block_cache_put(bs, s->l2_table_cache, (void **) &l2_table);
     if (ret < 0) {
         return 0;
     }
@@ -707,7 +709,7 @@ int qcow2_alloc_cluster_link_l2(BlockDriverState *bs, QCowL2Meta *m)
      }
 
 
-    ret = block_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+    ret = block_cache_put(bs, s->l2_table_cache, (void **) &l2_table);
     if (ret < 0) {
         goto err;
     }
@@ -916,7 +918,7 @@ static int handle_copied(BlockDriverState *bs, uint64_t guest_offset,
 
     /* Cleanup */
 out:
-    pret = block_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+    pret = block_cache_put(bs, s->l2_table_cache, (void **) &l2_table);
     if (pret < 0) {
         return pret;
     }
@@ -1044,7 +1046,7 @@ static int handle_alloc(BlockDriverState *bs, uint64_t guest_offset,
      * wrong with our code. */
     assert(nb_clusters > 0);
 
-    ret = block_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+    ret = block_cache_put(bs, s->l2_table_cache, (void **) &l2_table);
     if (ret < 0) {
         return ret;
     }
@@ -1342,7 +1344,7 @@ static int discard_single_l2(BlockDriverState *bs, uint64_t offset,
         qcow2_free_any_clusters(bs, old_offset, 1);
     }
 
-    ret = block_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+    ret = block_cache_put(bs, s->l2_table_cache, (void **) &l2_table);
     if (ret < 0) {
         return ret;
     }
@@ -1421,7 +1423,7 @@ static int zero_single_l2(BlockDriverState *bs, uint64_t offset,
         }
     }
 
-    ret = block_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+    ret = block_cache_put(bs, s->l2_table_cache, (void **) &l2_table);
     if (ret < 0) {
         return ret;
     }
