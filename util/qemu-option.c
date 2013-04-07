@@ -495,9 +495,31 @@ static QemuOpt *qemu_opt_find(QemuOpts *opts, const char *name)
     return NULL;
 }
 
+static const QemuOptDesc *find_desc_by_name(const QemuOptDesc *desc,
+                                            const char *name)
+{
+    int i;
+
+    for (i = 0; desc[i].name != NULL; i++) {
+        if (strcmp(desc[i].name, name) == 0) {
+            return &desc[i];
+        }
+    }
+
+    return NULL;
+}
+
 const char *qemu_opt_get(QemuOpts *opts, const char *name)
 {
     QemuOpt *opt = qemu_opt_find(opts, name);
+    const QemuOptDesc *desc;
+
+    if (!opt) {
+        desc = find_desc_by_name(opts->list->desc, name);
+        if (desc && desc->def_value_str) {
+            return desc->def_value_str;
+        }
+    }
     return opt ? opt->str : NULL;
 }
 
@@ -516,9 +538,17 @@ bool qemu_opt_has_help_opt(QemuOpts *opts)
 bool qemu_opt_get_bool(QemuOpts *opts, const char *name, bool defval)
 {
     QemuOpt *opt = qemu_opt_find(opts, name);
+    const QemuOptDesc *desc;
+    Error *local_err = NULL;
 
-    if (opt == NULL)
+    if (opt == NULL) {
+        desc = find_desc_by_name(opts->list->desc, name);
+        if (desc && desc->def_value_str) {
+            parse_option_bool(name, desc->def_value_str, &defval, &local_err);
+            assert(!local_err);
+        }
         return defval;
+    }
     assert(opt->desc && opt->desc->type == QEMU_OPT_BOOL);
     return opt->value.boolean;
 }
@@ -526,9 +556,17 @@ bool qemu_opt_get_bool(QemuOpts *opts, const char *name, bool defval)
 uint64_t qemu_opt_get_number(QemuOpts *opts, const char *name, uint64_t defval)
 {
     QemuOpt *opt = qemu_opt_find(opts, name);
+    const QemuOptDesc *desc;
+    Error *local_err = NULL;
 
-    if (opt == NULL)
+    if (opt == NULL) {
+        desc = find_desc_by_name(opts->list->desc, name);
+        if (desc && desc->def_value_str) {
+            parse_option_number(name, desc->def_value_str, &defval, &local_err);
+            assert(!local_err);
+        }
         return defval;
+    }
     assert(opt->desc && opt->desc->type == QEMU_OPT_NUMBER);
     return opt->value.uint;
 }
@@ -536,9 +574,17 @@ uint64_t qemu_opt_get_number(QemuOpts *opts, const char *name, uint64_t defval)
 uint64_t qemu_opt_get_size(QemuOpts *opts, const char *name, uint64_t defval)
 {
     QemuOpt *opt = qemu_opt_find(opts, name);
+    const QemuOptDesc *desc;
+    Error *local_err = NULL;
 
-    if (opt == NULL)
+    if (opt == NULL) {
+        desc = find_desc_by_name(opts->list->desc, name);
+        if (desc && desc->def_value_str) {
+            parse_option_size(name, desc->def_value_str, &defval, &local_err);
+            assert(!local_err);
+        }
         return defval;
+    }
     assert(opt->desc && opt->desc->type == QEMU_OPT_SIZE);
     return opt->value.uint;
 }
@@ -577,20 +623,6 @@ static void qemu_opt_del(QemuOpt *opt)
 static bool opts_accepts_any(const QemuOpts *opts)
 {
     return opts->list->desc[0].name == NULL;
-}
-
-static const QemuOptDesc *find_desc_by_name(const QemuOptDesc *desc,
-                                            const char *name)
-{
-    int i;
-
-    for (i = 0; desc[i].name != NULL; i++) {
-        if (strcmp(desc[i].name, name) == 0) {
-            return &desc[i];
-        }
-    }
-
-    return NULL;
 }
 
 int qemu_opt_unset(QemuOpts *opts, const char *name)
