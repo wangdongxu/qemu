@@ -603,7 +603,7 @@ out:
     return ret;
 }
 
-static int bdrv_qed_create(const char *filename, QEMUOptionParameter *options)
+static int bdrv_qed_create(const char *filename, QemuOpts *opts)
 {
     uint64_t image_size = 0;
     uint32_t cluster_size = QED_DEFAULT_CLUSTER_SIZE;
@@ -611,24 +611,14 @@ static int bdrv_qed_create(const char *filename, QEMUOptionParameter *options)
     const char *backing_file = NULL;
     const char *backing_fmt = NULL;
 
-    while (options && options->name) {
-        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            image_size = options->value.n;
-        } else if (!strcmp(options->name, BLOCK_OPT_BACKING_FILE)) {
-            backing_file = options->value.s;
-        } else if (!strcmp(options->name, BLOCK_OPT_BACKING_FMT)) {
-            backing_fmt = options->value.s;
-        } else if (!strcmp(options->name, BLOCK_OPT_CLUSTER_SIZE)) {
-            if (options->value.n) {
-                cluster_size = options->value.n;
-            }
-        } else if (!strcmp(options->name, BLOCK_OPT_TABLE_SIZE)) {
-            if (options->value.n) {
-                table_size = options->value.n;
-            }
-        }
-        options++;
-    }
+    image_size = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
+    backing_file = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
+    backing_fmt = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FMT);
+    cluster_size = qemu_opt_get_size_del(opts,
+                                         BLOCK_OPT_CLUSTER_SIZE,
+                                         QED_DEFAULT_CLUSTER_SIZE);
+    table_size = qemu_opt_get_size_del(opts, BLOCK_OPT_TABLE_SIZE,
+                                       QED_DEFAULT_TABLE_SIZE);
 
     if (!qed_is_cluster_size_valid(cluster_size)) {
         fprintf(stderr, "QED cluster size must be within range [%u, %u] and power of 2\n",
@@ -1537,36 +1527,44 @@ static int bdrv_qed_check(BlockDriverState *bs, BdrvCheckResult *result,
     return qed_check(s, result, !!fix);
 }
 
-static QEMUOptionParameter qed_create_options[] = {
-    {
-        .name = BLOCK_OPT_SIZE,
-        .type = OPT_SIZE,
-        .help = "Virtual disk size (in bytes)"
-    }, {
-        .name = BLOCK_OPT_BACKING_FILE,
-        .type = OPT_STRING,
-        .help = "File name of a base image"
-    }, {
-        .name = BLOCK_OPT_BACKING_FMT,
-        .type = OPT_STRING,
-        .help = "Image format of the base image"
-    }, {
-        .name = BLOCK_OPT_CLUSTER_SIZE,
-        .type = OPT_SIZE,
-        .help = "Cluster size (in bytes)",
-        .value = { .n = QED_DEFAULT_CLUSTER_SIZE },
-    }, {
-        .name = BLOCK_OPT_TABLE_SIZE,
-        .type = OPT_SIZE,
-        .help = "L1/L2 table size (in clusters)"
-    },
-    { /* end of list */ }
+static QemuOptsList qed_create_opts = {
+    .name = "qed-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(qed_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FILE,
+            .type = QEMU_OPT_STRING,
+            .help = "File name of a base image"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FMT,
+            .type = QEMU_OPT_STRING,
+            .help = "Image format of the base image"
+        },
+        {
+            .name = BLOCK_OPT_CLUSTER_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Cluster size (in bytes)",
+            .def_value_str = stringify(QED_DEFAULT_CLUSTER_SIZE),
+        },
+        {
+            .name = BLOCK_OPT_TABLE_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "L1/L2 table size (in clusters)"
+        },
+        { /* end of list */ }
+    }
 };
 
 static BlockDriver bdrv_qed = {
     .format_name              = "qed",
     .instance_size            = sizeof(BDRVQEDState),
-    .create_options           = qed_create_options,
+    .bdrv_create_opts         = &qed_create_opts,
 
     .bdrv_probe               = bdrv_qed_probe,
     .bdrv_rebind              = bdrv_qed_rebind,

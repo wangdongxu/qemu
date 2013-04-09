@@ -255,7 +255,7 @@ static void cow_close(BlockDriverState *bs)
 {
 }
 
-static int cow_create(const char *filename, QEMUOptionParameter *options)
+static int cow_create(const char *filename, QemuOpts *opts)
 {
     struct cow_header_v2 cow_header;
     struct stat st;
@@ -264,17 +264,11 @@ static int cow_create(const char *filename, QEMUOptionParameter *options)
     int ret;
     BlockDriverState *cow_bs;
 
-    /* Read out options */
-    while (options && options->name) {
-        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            image_sectors = options->value.n / 512;
-        } else if (!strcmp(options->name, BLOCK_OPT_BACKING_FILE)) {
-            image_filename = options->value.s;
-        }
-        options++;
-    }
+    /* Read out opts */
+    image_sectors = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0) / 512;
+    image_filename = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
 
-    ret = bdrv_create_file(filename, options);
+    ret = bdrv_create_file(filename, opts);
     if (ret < 0) {
         return ret;
     }
@@ -318,18 +312,22 @@ exit:
     return ret;
 }
 
-static QEMUOptionParameter cow_create_options[] = {
-    {
-        .name = BLOCK_OPT_SIZE,
-        .type = OPT_SIZE,
-        .help = "Virtual disk size"
-    },
-    {
-        .name = BLOCK_OPT_BACKING_FILE,
-        .type = OPT_STRING,
-        .help = "File name of a base image"
-    },
-    { NULL }
+static QemuOptsList cow_create_opts = {
+    .name = "cow-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(cow_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FILE,
+            .type = QEMU_OPT_STRING,
+            .help = "File name of a base image"
+        },
+        { /* end of list */ }
+    }
 };
 
 static BlockDriver bdrv_cow = {
@@ -345,7 +343,7 @@ static BlockDriver bdrv_cow = {
     .bdrv_write             = cow_co_write,
     .bdrv_co_is_allocated   = cow_co_is_allocated,
 
-    .create_options = cow_create_options,
+    .bdrv_create_opts       = &cow_create_opts,
 };
 
 static void bdrv_cow_init(void)

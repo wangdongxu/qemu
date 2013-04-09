@@ -1429,7 +1429,7 @@ static int relative_path(char *dest, int dest_size,
     return 0;
 }
 
-static int vmdk_create(const char *filename, QEMUOptionParameter *options)
+static int vmdk_create(const char *filename, QemuOpts *opts)
 {
     int fd, idx = 0;
     char desc[BUF_SIZE];
@@ -1470,21 +1470,14 @@ static int vmdk_create(const char *filename, QEMUOptionParameter *options)
     if (filename_decompose(filename, path, prefix, postfix, PATH_MAX)) {
         return -EINVAL;
     }
-    /* Read out options */
-    while (options && options->name) {
-        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            total_size = options->value.n;
-        } else if (!strcmp(options->name, BLOCK_OPT_ADAPTER_TYPE)) {
-            adapter_type = options->value.s;
-        } else if (!strcmp(options->name, BLOCK_OPT_BACKING_FILE)) {
-            backing_file = options->value.s;
-        } else if (!strcmp(options->name, BLOCK_OPT_COMPAT6)) {
-            flags |= options->value.n ? BLOCK_FLAG_COMPAT6 : 0;
-        } else if (!strcmp(options->name, BLOCK_OPT_SUBFMT)) {
-            fmt = options->value.s;
-        }
-        options++;
+    /* Read out opts */
+    total_size = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
+    adapter_type = qemu_opt_get_del(opts, BLOCK_OPT_ADAPTER_TYPE);
+    backing_file = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
+    if (qemu_opt_get_bool_del(opts, BLOCK_OPT_COMPAT6, 0)) {
+        flags |= BLOCK_FLAG_COMPAT6;
     }
+    fmt = qemu_opt_get_del(opts, BLOCK_OPT_SUBFMT);
     if (!adapter_type) {
         adapter_type = "ide";
     } else if (strcmp(adapter_type, "ide") &&
@@ -1665,36 +1658,41 @@ static int64_t vmdk_get_allocated_file_size(BlockDriverState *bs)
     return ret;
 }
 
-static QEMUOptionParameter vmdk_create_options[] = {
-    {
-        .name = BLOCK_OPT_SIZE,
-        .type = OPT_SIZE,
-        .help = "Virtual disk size"
-    },
-    {
-        .name = BLOCK_OPT_ADAPTER_TYPE,
-        .type = OPT_STRING,
-        .help = "Virtual adapter type, can be one of "
-                "ide (default), lsilogic, buslogic or legacyESX"
-    },
-    {
-        .name = BLOCK_OPT_BACKING_FILE,
-        .type = OPT_STRING,
-        .help = "File name of a base image"
-    },
-    {
-        .name = BLOCK_OPT_COMPAT6,
-        .type = OPT_FLAG,
-        .help = "VMDK version 6 image"
-    },
-    {
-        .name = BLOCK_OPT_SUBFMT,
-        .type = OPT_STRING,
-        .help =
-            "VMDK flat extent format, can be one of "
-            "{monolithicSparse (default) | monolithicFlat | twoGbMaxExtentSparse | twoGbMaxExtentFlat | streamOptimized} "
-    },
-    { NULL }
+static QemuOptsList vmdk_create_opts = {
+    .name = "vmdk-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(vmdk_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_ADAPTER_TYPE,
+            .type = OPT_STRING,
+            .help = "Virtual adapter type, can be one of "
+                    "ide (default), lsilogic, buslogic or legacyESX"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FILE,
+            .type = QEMU_OPT_STRING,
+            .help = "File name of a base image"
+        },
+        {
+            .name = BLOCK_OPT_COMPAT6,
+            .type = QEMU_OPT_BOOL,
+            .help = "VMDK version 6 image",
+            .def_value_str = "off"
+        },
+        {
+            .name = BLOCK_OPT_SUBFMT,
+            .type = QEMU_OPT_STRING,
+            .help =
+                "VMDK flat extent format, can be one of "
+                "{monolithicSparse (default) | monolithicFlat | twoGbMaxExtentSparse | twoGbMaxExtentFlat | streamOptimized} "
+        },
+        { /* end of list */ }
+    }
 };
 
 static BlockDriver bdrv_vmdk = {
@@ -1711,7 +1709,7 @@ static BlockDriver bdrv_vmdk = {
     .bdrv_co_is_allocated   = vmdk_co_is_allocated,
     .bdrv_get_allocated_file_size  = vmdk_get_allocated_file_size,
 
-    .create_options = vmdk_create_options,
+    .bdrv_create_opts = &vmdk_create_opts,
 };
 
 static void bdrv_vmdk_init(void)

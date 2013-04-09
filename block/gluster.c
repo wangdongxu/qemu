@@ -335,8 +335,7 @@ out:
     return ret;
 }
 
-static int qemu_gluster_create(const char *filename,
-        QEMUOptionParameter *options)
+static int qemu_gluster_create(const char *filename, QemuOpts *opts)
 {
     struct glfs *glfs;
     struct glfs_fd *fd;
@@ -350,12 +349,8 @@ static int qemu_gluster_create(const char *filename,
         goto out;
     }
 
-    while (options && options->name) {
-        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            total_size = options->value.n / BDRV_SECTOR_SIZE;
-        }
-        options++;
-    }
+    total_size =
+        qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0) / BDRV_SECTOR_SIZE;
 
     fd = glfs_creat(glfs, gconf->image,
         O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, S_IRUSR | S_IWUSR);
@@ -544,13 +539,17 @@ static void qemu_gluster_close(BlockDriverState *bs)
     glfs_fini(s->glfs);
 }
 
-static QEMUOptionParameter qemu_gluster_create_options[] = {
-    {
-        .name = BLOCK_OPT_SIZE,
-        .type = OPT_SIZE,
-        .help = "Virtual disk size"
-    },
-    { NULL }
+static QemuOptsList qemu_gluster_create_opts = {
+    .name = "qemu-gluster-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_gluster_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        { /* end of list */ }
+    }
 };
 
 static BlockDriver bdrv_gluster = {
@@ -565,7 +564,7 @@ static BlockDriver bdrv_gluster = {
     .bdrv_aio_readv               = qemu_gluster_aio_readv,
     .bdrv_aio_writev              = qemu_gluster_aio_writev,
     .bdrv_aio_flush               = qemu_gluster_aio_flush,
-    .create_options               = qemu_gluster_create_options,
+    .bdrv_create_opts             = &qemu_gluster_create_opts,
 };
 
 static BlockDriver bdrv_gluster_tcp = {
@@ -580,7 +579,7 @@ static BlockDriver bdrv_gluster_tcp = {
     .bdrv_aio_readv               = qemu_gluster_aio_readv,
     .bdrv_aio_writev              = qemu_gluster_aio_writev,
     .bdrv_aio_flush               = qemu_gluster_aio_flush,
-    .create_options               = qemu_gluster_create_options,
+    .bdrv_create_opts             = &qemu_gluster_create_opts,
 };
 
 static BlockDriver bdrv_gluster_unix = {
@@ -595,7 +594,7 @@ static BlockDriver bdrv_gluster_unix = {
     .bdrv_aio_readv               = qemu_gluster_aio_readv,
     .bdrv_aio_writev              = qemu_gluster_aio_writev,
     .bdrv_aio_flush               = qemu_gluster_aio_flush,
-    .create_options               = qemu_gluster_create_options,
+    .bdrv_create_opts             = &qemu_gluster_create_opts,
 };
 
 static BlockDriver bdrv_gluster_rdma = {
@@ -610,7 +609,7 @@ static BlockDriver bdrv_gluster_rdma = {
     .bdrv_aio_readv               = qemu_gluster_aio_readv,
     .bdrv_aio_writev              = qemu_gluster_aio_writev,
     .bdrv_aio_flush               = qemu_gluster_aio_flush,
-    .create_options               = qemu_gluster_create_options,
+    .bdrv_create_opts             = &qemu_gluster_create_opts,
 };
 
 static void bdrv_gluster_init(void)

@@ -287,7 +287,7 @@ static int qemu_rbd_set_conf(rados_t cluster, const char *conf)
     return ret;
 }
 
-static int qemu_rbd_create(const char *filename, QEMUOptionParameter *options)
+static int qemu_rbd_create(const char *filename, QemuOpts *opts)
 {
     int64_t bytes = 0;
     int64_t objsize;
@@ -310,24 +310,18 @@ static int qemu_rbd_create(const char *filename, QEMUOptionParameter *options)
     }
 
     /* Read out options */
-    while (options && options->name) {
-        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            bytes = options->value.n;
-        } else if (!strcmp(options->name, BLOCK_OPT_CLUSTER_SIZE)) {
-            if (options->value.n) {
-                objsize = options->value.n;
-                if ((objsize - 1) & objsize) {    /* not a power of 2? */
-                    error_report("obj size needs to be power of 2");
-                    return -EINVAL;
-                }
-                if (objsize < 4096) {
-                    error_report("obj size too small");
-                    return -EINVAL;
-                }
-                obj_order = ffs(objsize) - 1;
-            }
+    bytes = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
+    objsize = qemu_opt_get_size_del(opts, BLOCK_OPT_CLUSTER_SIZE, 0);
+    if (objsize) {
+        if ((objsize - 1) & objsize) {    /* not a power of 2? */
+            error_report("obj size needs to be power of 2");
+            return -EINVAL;
         }
-        options++;
+        if (objsize < 4096) {
+            error_report("obj size too small");
+            return -EINVAL;
+        }
+        obj_order = ffs(objsize) - 1;
     }
 
     clientname = qemu_rbd_parse_clientname(conf, clientname_buf);
@@ -921,20 +915,24 @@ static BlockDriverAIOCB* qemu_rbd_aio_discard(BlockDriverState *bs,
 }
 #endif
 
-static QEMUOptionParameter qemu_rbd_create_options[] = {
-    {
-     .name = BLOCK_OPT_SIZE,
-     .type = OPT_SIZE,
-     .help = "Virtual disk size"
-    },
-    {
-     .name = BLOCK_OPT_CLUSTER_SIZE,
-     .type = OPT_SIZE,
-     .help = "RBD object size"
-    },
-    {NULL}
+static QemuOptsList rbd_create_opts = {
+    .name = "rbd-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(rbd_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_CLUSTER_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "RBD object size",
+            .def_value_str = stringify(0),
+        },
+        { /* end of list */ }
+    }
 };
-
 static BlockDriver bdrv_rbd = {
     .format_name        = "rbd",
     .instance_size      = sizeof(BDRVRBDState),
@@ -942,7 +940,7 @@ static BlockDriver bdrv_rbd = {
     .bdrv_close         = qemu_rbd_close,
     .bdrv_create        = qemu_rbd_create,
     .bdrv_get_info      = qemu_rbd_getinfo,
-    .create_options     = qemu_rbd_create_options,
+    .bdrv_create_opts   = &rbd_create_opts,
     .bdrv_getlength     = qemu_rbd_getlength,
     .bdrv_truncate      = qemu_rbd_truncate,
     .protocol_name      = "rbd",

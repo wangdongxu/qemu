@@ -1224,7 +1224,7 @@ static int preallocate(BlockDriverState *bs)
 static int qcow2_create2(const char *filename, int64_t total_size,
                          const char *backing_file, const char *backing_format,
                          int flags, size_t cluster_size, int prealloc,
-                         QEMUOptionParameter *options, int version)
+                         QemuOpts *opts, int version)
 {
     /* Calculate cluster_bits */
     int cluster_bits;
@@ -1255,7 +1255,7 @@ static int qcow2_create2(const char *filename, int64_t total_size,
     uint8_t* refcount_table;
     int ret;
 
-    ret = bdrv_create_file(filename, options);
+    ret = bdrv_create_file(filename, opts);
     if (ret < 0) {
         return ret;
     }
@@ -1358,7 +1358,7 @@ out:
     return ret;
 }
 
-static int qcow2_create(const char *filename, QEMUOptionParameter *options)
+static int qcow2_create(const char *filename, QemuOpts *opts)
 {
     const char *backing_file = NULL;
     const char *backing_fmt = NULL;
@@ -1367,45 +1367,41 @@ static int qcow2_create(const char *filename, QEMUOptionParameter *options)
     size_t cluster_size = DEFAULT_CLUSTER_SIZE;
     int prealloc = 0;
     int version = 2;
+    const char *buf;
 
     /* Read out options */
-    while (options && options->name) {
-        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            sectors = options->value.n / 512;
-        } else if (!strcmp(options->name, BLOCK_OPT_BACKING_FILE)) {
-            backing_file = options->value.s;
-        } else if (!strcmp(options->name, BLOCK_OPT_BACKING_FMT)) {
-            backing_fmt = options->value.s;
-        } else if (!strcmp(options->name, BLOCK_OPT_ENCRYPT)) {
-            flags |= options->value.n ? BLOCK_FLAG_ENCRYPT : 0;
-        } else if (!strcmp(options->name, BLOCK_OPT_CLUSTER_SIZE)) {
-            if (options->value.n) {
-                cluster_size = options->value.n;
-            }
-        } else if (!strcmp(options->name, BLOCK_OPT_PREALLOC)) {
-            if (!options->value.s || !strcmp(options->value.s, "off")) {
-                prealloc = 0;
-            } else if (!strcmp(options->value.s, "metadata")) {
-                prealloc = 1;
-            } else {
-                fprintf(stderr, "Invalid preallocation mode: '%s'\n",
-                    options->value.s);
-                return -EINVAL;
-            }
-        } else if (!strcmp(options->name, BLOCK_OPT_COMPAT_LEVEL)) {
-            if (!options->value.s || !strcmp(options->value.s, "0.10")) {
-                version = 2;
-            } else if (!strcmp(options->value.s, "1.1")) {
-                version = 3;
-            } else {
-                fprintf(stderr, "Invalid compatibility level: '%s'\n",
-                    options->value.s);
-                return -EINVAL;
-            }
-        } else if (!strcmp(options->name, BLOCK_OPT_LAZY_REFCOUNTS)) {
-            flags |= options->value.n ? BLOCK_FLAG_LAZY_REFCOUNTS : 0;
-        }
-        options++;
+    sectors = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0) / 512;
+    backing_file = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
+    backing_fmt = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FMT);
+    if (qemu_opt_get_bool_del(opts, BLOCK_OPT_ENCRYPT, 0)) {
+        flags |= BLOCK_FLAG_ENCRYPT;
+    }
+    cluster_size = qemu_opt_get_size_del(opts, BLOCK_OPT_CLUSTER_SIZE,
+                                         DEFAULT_CLUSTER_SIZE);
+    buf = qemu_opt_get_del(opts, BLOCK_OPT_PREALLOC);
+    if (!buf || !strcmp(buf, "off")) {
+        prealloc = 0;
+    } else if (!strcmp(buf, "metadata")) {
+        prealloc = 1;
+    } else {
+        fprintf(stderr, "Invalid preallocation mode: '%s'\n",
+            buf);
+        return -EINVAL;
+    }
+
+    buf = qemu_opt_get_del(opts, BLOCK_OPT_COMPAT_LEVEL);
+    if (!buf || !strcmp(buf, "0.10")) {
+        version = 2;
+    } else if (!strcmp(buf, "1.1")) {
+        version = 3;
+    } else {
+        fprintf(stderr, "Invalid compatibility level: '%s'\n",
+            buf);
+        return -EINVAL;
+    }
+
+    if (qemu_opt_get_bool_del(opts, BLOCK_OPT_LAZY_REFCOUNTS, 0)) {
+        flags |= BLOCK_FLAG_LAZY_REFCOUNTS;
     }
 
     if (backing_file && prealloc) {
@@ -1421,7 +1417,7 @@ static int qcow2_create(const char *filename, QEMUOptionParameter *options)
     }
 
     return qcow2_create2(filename, sectors, backing_file, backing_fmt, flags,
-                         cluster_size, prealloc, options, version);
+                         cluster_size, prealloc, opts, version);
 }
 
 static int qcow2_make_empty(BlockDriverState *bs)
@@ -1682,49 +1678,55 @@ static int qcow2_load_vmstate(BlockDriverState *bs, uint8_t *buf,
     return ret;
 }
 
-static QEMUOptionParameter qcow2_create_options[] = {
-    {
-        .name = BLOCK_OPT_SIZE,
-        .type = OPT_SIZE,
-        .help = "Virtual disk size"
-    },
-    {
-        .name = BLOCK_OPT_COMPAT_LEVEL,
-        .type = OPT_STRING,
-        .help = "Compatibility level (0.10 or 1.1)"
-    },
-    {
-        .name = BLOCK_OPT_BACKING_FILE,
-        .type = OPT_STRING,
-        .help = "File name of a base image"
-    },
-    {
-        .name = BLOCK_OPT_BACKING_FMT,
-        .type = OPT_STRING,
-        .help = "Image format of the base image"
-    },
-    {
-        .name = BLOCK_OPT_ENCRYPT,
-        .type = OPT_FLAG,
-        .help = "Encrypt the image"
-    },
-    {
-        .name = BLOCK_OPT_CLUSTER_SIZE,
-        .type = OPT_SIZE,
-        .help = "qcow2 cluster size",
-        .value = { .n = DEFAULT_CLUSTER_SIZE },
-    },
-    {
-        .name = BLOCK_OPT_PREALLOC,
-        .type = OPT_STRING,
-        .help = "Preallocation mode (allowed values: off, metadata)"
-    },
-    {
-        .name = BLOCK_OPT_LAZY_REFCOUNTS,
-        .type = OPT_FLAG,
-        .help = "Postpone refcount updates",
-    },
-    { NULL }
+static QemuOptsList qcow2_create_opts = {
+    .name = "qcow2-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(qcow2_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_COMPAT_LEVEL,
+            .type = QEMU_OPT_STRING,
+            .help = "Compatibility level (0.10 or 1.1)"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FILE,
+            .type = QEMU_OPT_STRING,
+            .help = "File name of a base image"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FMT,
+            .type = QEMU_OPT_STRING,
+            .help = "Image format of the base image"
+        },
+        {
+            .name = BLOCK_OPT_ENCRYPT,
+            .type = QEMU_OPT_BOOL,
+            .help = "Encrypt the image",
+            .def_value_str = "off"
+        },
+        {
+            .name = BLOCK_OPT_CLUSTER_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "qcow2 cluster size",
+            .def_value_str = stringify(DEFAULT_CLUSTER_SIZE)
+        },
+        {
+            .name = BLOCK_OPT_PREALLOC,
+            .type = QEMU_OPT_STRING,
+            .help = "Preallocation mode (allowed values: off, metadata)"
+        },
+        {
+            .name = BLOCK_OPT_LAZY_REFCOUNTS,
+            .type = QEMU_OPT_BOOL,
+            .help = "Postpone refcount updates",
+            .def_value_str = "off"
+        },
+        { /* end of list */ }
+    }
 };
 
 static BlockDriver bdrv_qcow2 = {
@@ -1762,8 +1764,9 @@ static BlockDriver bdrv_qcow2 = {
 
     .bdrv_invalidate_cache      = qcow2_invalidate_cache,
 
-    .create_options = qcow2_create_options,
     .bdrv_check = qcow2_check,
+
+    .bdrv_create_opts     = &qcow2_create_opts,
 };
 
 static void bdrv_qcow2_init(void)
