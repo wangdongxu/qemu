@@ -683,40 +683,39 @@ static int create_fixed_disk(int fd, uint8_t *buf, int64_t total_size)
     return ret;
 }
 
-static int vpc_create(const char *filename, QEMUOptionParameter *options)
+static int vpc_create(const char *filename, QemuOpts *opts)
 {
     uint8_t buf[1024];
     struct vhd_footer *footer = (struct vhd_footer *) buf;
-    QEMUOptionParameter *disk_type_param;
+    const char *disk_type_param = NULL;
     int fd, i;
     uint16_t cyls = 0;
     uint8_t heads = 0;
     uint8_t secs_per_cyl = 0;
     int64_t total_sectors;
-    int64_t total_size;
-    int disk_type;
+    int64_t total_size = 0;
+    int disk_type = VHD_DYNAMIC;
     int ret = -EIO;
 
-    /* Read out options */
-    total_size = get_option_parameter(options, BLOCK_OPT_SIZE)->value.n;
-
-    disk_type_param = get_option_parameter(options, BLOCK_OPT_SUBFMT);
-    if (disk_type_param && disk_type_param->value.s) {
-        if (!strcmp(disk_type_param->value.s, "dynamic")) {
+    /* Read out opts */
+    total_size = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
+    disk_type_param = qemu_opt_get_del(opts, BLOCK_OPT_SUBFMT);
+    if (disk_type_param) {
+        if (!strcmp(disk_type_param, "dynamic")) {
             disk_type = VHD_DYNAMIC;
-        } else if (!strcmp(disk_type_param->value.s, "fixed")) {
+        } else if (!strcmp(disk_type_param, "fixed")) {
             disk_type = VHD_FIXED;
         } else {
-            return -EINVAL;
+            ret = -EINVAL;
+            goto finish;
         }
-    } else {
-        disk_type = VHD_DYNAMIC;
     }
 
     /* Create the file */
     fd = qemu_open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0644);
     if (fd < 0) {
-        return -EIO;
+        ret = -EIO;
+        goto finish;
     }
 
     /*
@@ -783,6 +782,8 @@ static int vpc_create(const char *filename, QEMUOptionParameter *options)
 
  fail:
     qemu_close(fd);
+finish:
+    g_free((/* !const */ char*)disk_type_param);
     return ret;
 }
 
@@ -798,20 +799,24 @@ static void vpc_close(BlockDriverState *bs)
     error_free(s->migration_blocker);
 }
 
-static QEMUOptionParameter vpc_create_options[] = {
-    {
-        .name = BLOCK_OPT_SIZE,
-        .type = OPT_SIZE,
-        .help = "Virtual disk size"
-    },
-    {
-        .name = BLOCK_OPT_SUBFMT,
-        .type = OPT_STRING,
-        .help =
-            "Type of virtual hard disk format. Supported formats are "
-            "{dynamic (default) | fixed} "
-    },
-    { NULL }
+static QemuOptsList vpc_create_opts = {
+    .name = "vpc-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(vpc_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_SUBFMT,
+            .type = QEMU_OPT_STRING,
+            .help =
+                "Type of virtual hard disk format. Supported formats are "
+                "{dynamic (default) | fixed} "
+        },
+        { /* end of list */ }
+    }
 };
 
 static BlockDriver bdrv_vpc = {
@@ -827,7 +832,7 @@ static BlockDriver bdrv_vpc = {
     .bdrv_read              = vpc_co_read,
     .bdrv_write             = vpc_co_write,
 
-    .create_options = vpc_create_options,
+    .bdrv_create_opts = &vpc_create_opts,
 };
 
 static void bdrv_vpc_init(void)

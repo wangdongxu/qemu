@@ -1501,7 +1501,7 @@ static int relative_path(char *dest, int dest_size,
     return VMDK_OK;
 }
 
-static int vmdk_create(const char *filename, QEMUOptionParameter *options)
+static int vmdk_create(const char *filename, QemuOpts *opts)
 {
     int fd, idx = 0;
     char desc[BUF_SIZE];
@@ -1541,24 +1541,19 @@ static int vmdk_create(const char *filename, QEMUOptionParameter *options)
         "ddb.adapterType = \"%s\"\n";
 
     if (filename_decompose(filename, path, prefix, postfix, PATH_MAX)) {
-        return -EINVAL;
+        ret = -EINVAL;
+        goto finish;
     }
-    /* Read out options */
-    while (options && options->name) {
-        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            total_size = options->value.n;
-        } else if (!strcmp(options->name, BLOCK_OPT_ADAPTER_TYPE)) {
-            adapter_type = options->value.s;
-        } else if (!strcmp(options->name, BLOCK_OPT_BACKING_FILE)) {
-            backing_file = options->value.s;
-        } else if (!strcmp(options->name, BLOCK_OPT_COMPAT6)) {
-            flags |= options->value.n ? BLOCK_FLAG_COMPAT6 : 0;
-        } else if (!strcmp(options->name, BLOCK_OPT_SUBFMT)) {
-            fmt = options->value.s;
-        } else if (!strcmp(options->name, BLOCK_OPT_ZEROED_GRAIN)) {
-            zeroed_grain |= options->value.n;
-        }
-        options++;
+    /* Read out opts */
+    total_size = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
+    adapter_type = qemu_opt_get_del(opts, BLOCK_OPT_ADAPTER_TYPE);
+    backing_file = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
+    if (qemu_opt_get_bool_del(opts, BLOCK_OPT_COMPAT6, 0)) {
+        flags |= BLOCK_FLAG_COMPAT6;
+    }
+    fmt = qemu_opt_get_del(opts, BLOCK_OPT_SUBFMT);
+    if (qemu_opt_get_bool_del(opts, BLOCK_OPT_ZEROED_GRAIN, 0)) {
+        zeroed_grain = true;
     }
     if (!adapter_type) {
         adapter_type = "ide";
@@ -1567,7 +1562,8 @@ static int vmdk_create(const char *filename, QEMUOptionParameter *options)
                strcmp(adapter_type, "lsilogic") &&
                strcmp(adapter_type, "legacyESX")) {
         fprintf(stderr, "VMDK: Unknown adapter type: '%s'.\n", adapter_type);
-        return -EINVAL;
+        ret = -EINVAL;
+        goto finish;
     }
     if (strcmp(adapter_type, "ide") != 0) {
         /* that's the number of heads with which vmware operates when
@@ -1583,7 +1579,8 @@ static int vmdk_create(const char *filename, QEMUOptionParameter *options)
                strcmp(fmt, "twoGbMaxExtentFlat") &&
                strcmp(fmt, "streamOptimized")) {
         fprintf(stderr, "VMDK: Unknown subformat: %s\n", fmt);
-        return -EINVAL;
+        ret = -EINVAL;
+        goto finish;
     }
     split = !(strcmp(fmt, "twoGbMaxExtentFlat") &&
               strcmp(fmt, "twoGbMaxExtentSparse"));
@@ -1597,7 +1594,8 @@ static int vmdk_create(const char *filename, QEMUOptionParameter *options)
     }
     if (flat && backing_file) {
         /* not supporting backing file for flat image */
-        return -ENOTSUP;
+        ret = -ENOTSUP;
+        goto finish;
     }
     if (backing_file) {
         char parent_filename[PATH_MAX];
@@ -1605,11 +1603,12 @@ static int vmdk_create(const char *filename, QEMUOptionParameter *options)
         ret = bdrv_open(bs, backing_file, NULL, 0, NULL);
         if (ret != 0) {
             bdrv_delete(bs);
-            return ret;
+            goto finish;
         }
         if (strcmp(bs->drv->format_name, "vmdk")) {
             bdrv_delete(bs);
-            return -EINVAL;
+            ret = -EINVAL;
+            goto finish;
         }
         parent_cid = vmdk_read_cid(bs, 0);
         bdrv_delete(bs);
@@ -1674,7 +1673,8 @@ static int vmdk_create(const char *filename, QEMUOptionParameter *options)
                        0644);
     }
     if (fd < 0) {
-        return -errno;
+        ret = -errno;
+        goto finish;
     }
     /* the descriptor offset = 0x200 */
     if (!split && !flat && 0x200 != lseek(fd, 0x200, SEEK_SET)) {
@@ -1689,6 +1689,9 @@ static int vmdk_create(const char *filename, QEMUOptionParameter *options)
     ret = 0;
 exit:
     qemu_close(fd);
+finish:
+    g_free((/* !const */ char*)adapter_type);
+    g_free((/* !const */ char*)backing_file);
     return ret;
 }
 
@@ -1741,41 +1744,46 @@ static int64_t vmdk_get_allocated_file_size(BlockDriverState *bs)
     return ret;
 }
 
-static QEMUOptionParameter vmdk_create_options[] = {
-    {
-        .name = BLOCK_OPT_SIZE,
-        .type = OPT_SIZE,
-        .help = "Virtual disk size"
-    },
-    {
-        .name = BLOCK_OPT_ADAPTER_TYPE,
-        .type = OPT_STRING,
-        .help = "Virtual adapter type, can be one of "
-                "ide (default), lsilogic, buslogic or legacyESX"
-    },
-    {
-        .name = BLOCK_OPT_BACKING_FILE,
-        .type = OPT_STRING,
-        .help = "File name of a base image"
-    },
-    {
-        .name = BLOCK_OPT_COMPAT6,
-        .type = OPT_FLAG,
-        .help = "VMDK version 6 image"
-    },
-    {
-        .name = BLOCK_OPT_SUBFMT,
-        .type = OPT_STRING,
-        .help =
-            "VMDK flat extent format, can be one of "
-            "{monolithicSparse (default) | monolithicFlat | twoGbMaxExtentSparse | twoGbMaxExtentFlat | streamOptimized} "
-    },
-    {
-        .name = BLOCK_OPT_ZEROED_GRAIN,
-        .type = OPT_FLAG,
-        .help = "Enable efficient zero writes using the zeroed-grain GTE feature"
-    },
-    { NULL }
+static QemuOptsList vmdk_create_opts = {
+    .name = "vmdk-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(vmdk_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_ADAPTER_TYPE,
+            .type = QEMU_OPT_STRING,
+            .help = "Virtual adapter type, can be one of "
+                    "ide (default), lsilogic, buslogic or legacyESX"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FILE,
+            .type = QEMU_OPT_STRING,
+            .help = "File name of a base image"
+        },
+        {
+            .name = BLOCK_OPT_COMPAT6,
+            .type = QEMU_OPT_BOOL,
+            .help = "VMDK version 6 image",
+            .def_value_str = "off"
+        },
+        {
+            .name = BLOCK_OPT_SUBFMT,
+            .type = QEMU_OPT_STRING,
+            .help =
+                "VMDK flat extent format, can be one of "
+                "{monolithicSparse (default) | monolithicFlat | twoGbMaxExtentSparse | twoGbMaxExtentFlat | streamOptimized} "
+        },
+        {
+            .name = BLOCK_OPT_ZEROED_GRAIN,
+            .type = QEMU_OPT_BOOL,
+            .help = "Enable efficient zero writes using the zeroed-grain GTE feature"
+        },
+        { /* end of list */ }
+    }
 };
 
 static BlockDriver bdrv_vmdk = {
@@ -1793,7 +1801,7 @@ static BlockDriver bdrv_vmdk = {
     .bdrv_co_is_allocated   = vmdk_co_is_allocated,
     .bdrv_get_allocated_file_size  = vmdk_get_allocated_file_size,
 
-    .create_options = vmdk_create_options,
+    .bdrv_create_opts = &vmdk_create_opts,
 };
 
 static void bdrv_vmdk_init(void)

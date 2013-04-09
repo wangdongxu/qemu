@@ -123,6 +123,19 @@
 
 #define MAX_BLOCKSIZE	4096
 
+static QemuOptsList file_proto_create_opts = {
+    .name = "file-proto-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(file_proto_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        { /* end of list */ }
+    }
+};
+
 typedef struct BDRVRawState {
     int fd;
     int type;
@@ -1040,19 +1053,14 @@ static int64_t raw_get_allocated_file_size(BlockDriverState *bs)
     return (int64_t)st.st_blocks * 512;
 }
 
-static int raw_create(const char *filename, QEMUOptionParameter *options)
+static int raw_create(const char *filename, QemuOpts *opts)
 {
     int fd;
     int result = 0;
     int64_t total_size = 0;
 
-    /* Read out options */
-    while (options && options->name) {
-        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            total_size = options->value.n / BDRV_SECTOR_SIZE;
-        }
-        options++;
-    }
+    total_size =
+        qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0) / BDRV_SECTOR_SIZE;
 
     fd = qemu_open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY,
                    0644);
@@ -1179,15 +1187,6 @@ static coroutine_fn BlockDriverAIOCB *raw_aio_discard(BlockDriverState *bs,
                        cb, opaque, QEMU_AIO_DISCARD);
 }
 
-static QEMUOptionParameter raw_create_options[] = {
-    {
-        .name = BLOCK_OPT_SIZE,
-        .type = OPT_SIZE,
-        .help = "Virtual disk size"
-    },
-    { NULL }
-};
-
 static BlockDriver bdrv_file = {
     .format_name = "file",
     .protocol_name = "file",
@@ -1210,8 +1209,7 @@ static BlockDriver bdrv_file = {
     .bdrv_getlength = raw_getlength,
     .bdrv_get_allocated_file_size
                         = raw_get_allocated_file_size,
-
-    .create_options = raw_create_options,
+    .bdrv_create_opts   = &file_proto_create_opts,
 };
 
 /***********************************************/
@@ -1496,20 +1494,15 @@ static coroutine_fn BlockDriverAIOCB *hdev_aio_discard(BlockDriverState *bs,
                        cb, opaque, QEMU_AIO_DISCARD|QEMU_AIO_BLKDEV);
 }
 
-static int hdev_create(const char *filename, QEMUOptionParameter *options)
+static int hdev_create(const char *filename, QemuOpts *opts)
 {
     int fd;
     int ret = 0;
     struct stat stat_buf;
     int64_t total_size = 0;
 
-    /* Read out options */
-    while (options && options->name) {
-        if (!strcmp(options->name, "size")) {
-            total_size = options->value.n / BDRV_SECTOR_SIZE;
-        }
-        options++;
-    }
+    total_size =
+        qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0) / BDRV_SECTOR_SIZE;
 
     fd = qemu_open(filename, O_WRONLY | O_BINARY);
     if (fd < 0)
@@ -1533,7 +1526,7 @@ static int hdev_has_zero_init(BlockDriverState *bs)
 
 static BlockDriver bdrv_host_device = {
     .format_name        = "host_device",
-    .protocol_name        = "host_device",
+    .protocol_name      = "host_device",
     .instance_size      = sizeof(BDRVRawState),
     .bdrv_probe_device  = hdev_probe_device,
     .bdrv_file_open     = hdev_open,
@@ -1542,7 +1535,6 @@ static BlockDriver bdrv_host_device = {
     .bdrv_reopen_commit  = raw_reopen_commit,
     .bdrv_reopen_abort   = raw_reopen_abort,
     .bdrv_create        = hdev_create,
-    .create_options     = raw_create_options,
     .bdrv_has_zero_init = hdev_has_zero_init,
 
     .bdrv_aio_readv	= raw_aio_readv,
@@ -1551,9 +1543,10 @@ static BlockDriver bdrv_host_device = {
     .bdrv_aio_discard   = hdev_aio_discard,
 
     .bdrv_truncate      = raw_truncate,
-    .bdrv_getlength	= raw_getlength,
+    .bdrv_getlength     = raw_getlength,
     .bdrv_get_allocated_file_size
                         = raw_get_allocated_file_size,
+    .bdrv_create_opts   = &file_proto_create_opts,
 
     /* generic scsi device */
 #ifdef __linux__
@@ -1667,7 +1660,6 @@ static BlockDriver bdrv_host_floppy = {
     .bdrv_reopen_commit  = raw_reopen_commit,
     .bdrv_reopen_abort   = raw_reopen_abort,
     .bdrv_create        = hdev_create,
-    .create_options     = raw_create_options,
     .bdrv_has_zero_init = hdev_has_zero_init,
 
     .bdrv_aio_readv     = raw_aio_readv,
@@ -1683,6 +1675,7 @@ static BlockDriver bdrv_host_floppy = {
     .bdrv_is_inserted   = floppy_is_inserted,
     .bdrv_media_changed = floppy_media_changed,
     .bdrv_eject         = floppy_eject,
+    .bdrv_create_opts   = &file_proto_create_opts,
 };
 
 static int cdrom_open(BlockDriverState *bs, QDict *options, int flags)
@@ -1769,7 +1762,6 @@ static BlockDriver bdrv_host_cdrom = {
     .bdrv_reopen_commit  = raw_reopen_commit,
     .bdrv_reopen_abort   = raw_reopen_abort,
     .bdrv_create        = hdev_create,
-    .create_options     = raw_create_options,
     .bdrv_has_zero_init = hdev_has_zero_init,
 
     .bdrv_aio_readv     = raw_aio_readv,
@@ -1789,6 +1781,8 @@ static BlockDriver bdrv_host_cdrom = {
     /* generic scsi device */
     .bdrv_ioctl         = hdev_ioctl,
     .bdrv_aio_ioctl     = hdev_aio_ioctl,
+
+    .bdrv_create_opts   = &file_proto_create_opts,
 };
 #endif /* __linux__ */
 
@@ -1891,7 +1885,6 @@ static BlockDriver bdrv_host_cdrom = {
     .bdrv_reopen_commit  = raw_reopen_commit,
     .bdrv_reopen_abort   = raw_reopen_abort,
     .bdrv_create        = hdev_create,
-    .create_options     = raw_create_options,
     .bdrv_has_zero_init = hdev_has_zero_init,
 
     .bdrv_aio_readv     = raw_aio_readv,

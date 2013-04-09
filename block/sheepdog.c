@@ -1454,12 +1454,12 @@ out:
     return ret;
 }
 
-static int sd_create(const char *filename, QEMUOptionParameter *options)
+static int sd_create(const char *filename, QemuOpts *opts)
 {
     int ret = 0;
     uint32_t vid = 0, base_vid = 0;
     int64_t vdi_size = 0;
-    char *backing_file = NULL;
+    const char *backing_file = NULL, *buf = NULL;
     BDRVSheepdogState *s;
     char vdi[SD_MAX_VDI_LEN], tag[SD_MAX_VDI_TAG_LEN];
     uint32_t snapid;
@@ -1478,26 +1478,18 @@ static int sd_create(const char *filename, QEMUOptionParameter *options)
         goto out;
     }
 
-    while (options && options->name) {
-        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            vdi_size = options->value.n;
-        } else if (!strcmp(options->name, BLOCK_OPT_BACKING_FILE)) {
-            backing_file = options->value.s;
-        } else if (!strcmp(options->name, BLOCK_OPT_PREALLOC)) {
-            if (!options->value.s || !strcmp(options->value.s, "off")) {
-                prealloc = false;
-            } else if (!strcmp(options->value.s, "full")) {
-                prealloc = true;
-            } else {
-                error_report("Invalid preallocation mode: '%s'",
-                             options->value.s);
-                ret = -EINVAL;
-                goto out;
-            }
-        }
-        options++;
+    vdi_size = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
+    backing_file = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
+    buf = qemu_opt_get_del(opts, BLOCK_OPT_PREALLOC);
+    if (!buf || !strcmp(buf, "off")) {
+        prealloc = false;
+    } else if (!strcmp(buf, "full")) {
+        prealloc = true;
+    } else {
+        error_report("Invalid preallocation mode: '%s'", buf);
+        ret = -EINVAL;
+        goto out;
     }
-
     if (vdi_size > SD_MAX_VDI_SIZE) {
         error_report("too big image size");
         ret = -EINVAL;
@@ -1542,6 +1534,8 @@ static int sd_create(const char *filename, QEMUOptionParameter *options)
 
     ret = sd_prealloc(filename);
 out:
+    g_free((/* !const */ char*)backing_file);
+    g_free((/* !const */ char*)buf);
     g_free(s);
     return ret;
 }
@@ -2261,7 +2255,6 @@ static int sd_load_vmstate(BlockDriverState *bs, uint8_t *data,
     return do_load_save_vmstate(s, data, pos, size, 1);
 }
 
-
 static coroutine_fn int sd_co_discard(BlockDriverState *bs, int64_t sector_num,
                                       int nb_sectors)
 {
@@ -2323,23 +2316,27 @@ sd_co_is_allocated(BlockDriverState *bs, int64_t sector_num, int nb_sectors,
     return ret;
 }
 
-static QEMUOptionParameter sd_create_options[] = {
-    {
-        .name = BLOCK_OPT_SIZE,
-        .type = OPT_SIZE,
-        .help = "Virtual disk size"
-    },
-    {
-        .name = BLOCK_OPT_BACKING_FILE,
-        .type = OPT_STRING,
-        .help = "File name of a base image"
-    },
-    {
-        .name = BLOCK_OPT_PREALLOC,
-        .type = OPT_STRING,
-        .help = "Preallocation mode (allowed values: off, full)"
-    },
-    { NULL }
+static QemuOptsList sd_create_opts = {
+    .name = "sheepdog-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(sd_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FILE,
+            .type = QEMU_OPT_STRING,
+            .help = "File name of a base image"
+        },
+        {
+            .name = BLOCK_OPT_PREALLOC,
+            .type = QEMU_OPT_STRING,
+            .help = "Preallocation mode (allowed values: off, full)"
+        },
+        { /* end of list */ }
+    }
 };
 
 static BlockDriver bdrv_sheepdog = {
@@ -2366,7 +2363,7 @@ static BlockDriver bdrv_sheepdog = {
     .bdrv_save_vmstate  = sd_save_vmstate,
     .bdrv_load_vmstate  = sd_load_vmstate,
 
-    .create_options = sd_create_options,
+    .bdrv_create_opts   = &sd_create_opts,
 };
 
 static BlockDriver bdrv_sheepdog_tcp = {
@@ -2393,7 +2390,7 @@ static BlockDriver bdrv_sheepdog_tcp = {
     .bdrv_save_vmstate  = sd_save_vmstate,
     .bdrv_load_vmstate  = sd_load_vmstate,
 
-    .create_options = sd_create_options,
+    .bdrv_create_opts = &sd_create_opts,
 };
 
 static BlockDriver bdrv_sheepdog_unix = {
@@ -2420,7 +2417,7 @@ static BlockDriver bdrv_sheepdog_unix = {
     .bdrv_save_vmstate  = sd_save_vmstate,
     .bdrv_load_vmstate  = sd_load_vmstate,
 
-    .create_options = sd_create_options,
+    .bdrv_create_opts = &sd_create_opts,
 };
 
 static void bdrv_sheepdog_init(void)

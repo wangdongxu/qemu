@@ -355,7 +355,7 @@ BlockDriver *bdrv_find_whitelisted_format(const char *format_name)
 typedef struct CreateCo {
     BlockDriver *drv;
     char *filename;
-    QEMUOptionParameter *options;
+    QemuOpts *opts;
     int ret;
 } CreateCo;
 
@@ -364,11 +364,10 @@ static void coroutine_fn bdrv_create_co_entry(void *opaque)
     CreateCo *cco = opaque;
     assert(cco->drv);
 
-    cco->ret = cco->drv->bdrv_create(cco->filename, cco->options);
+    cco->ret = cco->drv->bdrv_create(cco->filename, cco->opts);
 }
 
-int bdrv_create(BlockDriver *drv, const char* filename,
-    QEMUOptionParameter *options)
+int bdrv_create(BlockDriver *drv, const char* filename, QemuOpts *opts)
 {
     int ret;
 
@@ -376,7 +375,7 @@ int bdrv_create(BlockDriver *drv, const char* filename,
     CreateCo cco = {
         .drv = drv,
         .filename = g_strdup(filename),
-        .options = options,
+        .opts = opts ?: qemu_opts_create_nofail(drv->bdrv_create_opts),
         .ret = NOT_DONE,
     };
 
@@ -399,11 +398,14 @@ int bdrv_create(BlockDriver *drv, const char* filename,
     ret = cco.ret;
 
 out:
+    if (!opts) {
+        qemu_opts_del(cco.opts);
+    }
     g_free(cco.filename);
     return ret;
 }
 
-int bdrv_create_file(const char* filename, QEMUOptionParameter *options)
+int bdrv_create_file(const char *filename, QemuOpts *opts)
 {
     BlockDriver *drv;
 
@@ -412,7 +414,7 @@ int bdrv_create_file(const char* filename, QEMUOptionParameter *options)
         return -ENOENT;
     }
 
-    return bdrv_create(drv, filename, options);
+    return bdrv_create(drv, filename, opts);
 }
 
 /*
@@ -968,7 +970,7 @@ int bdrv_open(BlockDriverState *bs, const char *filename, QDict *options,
         BlockDriverState *bs1;
         int64_t total_size;
         BlockDriver *bdrv_qcow2;
-        QEMUOptionParameter *create_options;
+        QemuOpts *opts;
         char backing_filename[PATH_MAX];
 
         if (qdict_size(options) != 0) {
@@ -1007,19 +1009,16 @@ int bdrv_open(BlockDriverState *bs, const char *filename, QDict *options,
         }
 
         bdrv_qcow2 = bdrv_find_format("qcow2");
-        create_options = parse_option_parameters("", bdrv_qcow2->create_options,
-                                                 NULL);
+        opts = qemu_opts_create_nofail(bdrv_qcow2->bdrv_create_opts);
 
-        set_option_parameter_int(create_options, BLOCK_OPT_SIZE, total_size);
-        set_option_parameter(create_options, BLOCK_OPT_BACKING_FILE,
-                             backing_filename);
+        qemu_opt_set_number(opts, BLOCK_OPT_SIZE, total_size);
+        qemu_opt_set(opts, BLOCK_OPT_BACKING_FILE, backing_filename);
         if (drv) {
-            set_option_parameter(create_options, BLOCK_OPT_BACKING_FMT,
-                drv->format_name);
+            qemu_opt_set(opts, BLOCK_OPT_BACKING_FMT, drv->format_name);
         }
 
-        ret = bdrv_create(bdrv_qcow2, tmp_filename, create_options);
-        free_option_parameters(create_options);
+        ret = bdrv_create(bdrv_qcow2, tmp_filename, opts);
+        qemu_opts_del(opts);
         if (ret < 0) {
             goto fail;
         }
@@ -4738,8 +4737,10 @@ void bdrv_img_create(const char *filename, const char *fmt,
                      char *options, uint64_t img_size, int flags,
                      Error **errp, bool quiet)
 {
-    QEMUOptionParameter *param = NULL, *create_options = NULL;
-    QEMUOptionParameter *backing_fmt, *backing_file, *size;
+    QemuOpts *opts = NULL;
+    QemuOptsList *create_opts = NULL;
+    const char *backing_fmt, *backing_file;
+    int64_t size;
     BlockDriverState *bs = NULL;
     BlockDriver *drv, *proto_drv;
     BlockDriver *backing_drv = NULL;
@@ -4757,28 +4758,23 @@ void bdrv_img_create(const char *filename, const char *fmt,
         error_setg(errp, "Unknown protocol '%s'", filename);
         return;
     }
-
-    create_options = append_option_parameters(create_options,
-                                              drv->create_options);
-    create_options = append_option_parameters(create_options,
-                                              proto_drv->create_options);
-
+    create_opts = qemu_opts_append(drv->bdrv_create_opts,
+                                   proto_drv->bdrv_create_opts);
     /* Create parameter list with default values */
-    param = parse_option_parameters("", create_options, param);
+    opts = qemu_opts_create_nofail(create_opts);
 
-    set_option_parameter_int(param, BLOCK_OPT_SIZE, img_size);
+    qemu_opt_set_number(opts, BLOCK_OPT_SIZE, img_size);
 
     /* Parse -o options */
     if (options) {
-        param = parse_option_parameters(options, create_options, param);
-        if (param == NULL) {
+        if (qemu_opts_do_parse_replace(opts, options, NULL) != 0) {
             error_setg(errp, "Invalid options for file format '%s'.", fmt);
             goto out;
         }
     }
 
     if (base_filename) {
-        if (set_option_parameter(param, BLOCK_OPT_BACKING_FILE,
+        if (qemu_opt_replace_set(opts, BLOCK_OPT_BACKING_FILE,
                                  base_filename)) {
             error_setg(errp, "Backing file not supported for file format '%s'",
                        fmt);
@@ -4787,39 +4783,37 @@ void bdrv_img_create(const char *filename, const char *fmt,
     }
 
     if (base_fmt) {
-        if (set_option_parameter(param, BLOCK_OPT_BACKING_FMT, base_fmt)) {
+        if (qemu_opt_replace_set(opts, BLOCK_OPT_BACKING_FMT, base_fmt)) {
             error_setg(errp, "Backing file format not supported for file "
                              "format '%s'", fmt);
             goto out;
         }
     }
 
-    backing_file = get_option_parameter(param, BLOCK_OPT_BACKING_FILE);
-    if (backing_file && backing_file->value.s) {
-        if (!strcmp(filename, backing_file->value.s)) {
+    backing_file = qemu_opt_get(opts, BLOCK_OPT_BACKING_FILE);
+    if (backing_file) {
+        if (!strcmp(filename, backing_file)) {
             error_setg(errp, "Error: Trying to create an image with the "
                              "same filename as the backing file");
             goto out;
         }
     }
 
-    backing_fmt = get_option_parameter(param, BLOCK_OPT_BACKING_FMT);
-    if (backing_fmt && backing_fmt->value.s) {
-        backing_drv = bdrv_find_format(backing_fmt->value.s);
+    backing_fmt = qemu_opt_get(opts, BLOCK_OPT_BACKING_FMT);
+    if (backing_fmt) {
+        backing_drv = bdrv_find_format(backing_fmt);
         if (!backing_drv) {
-            error_setg(errp, "Unknown backing file format '%s'",
-                       backing_fmt->value.s);
+            error_setg(errp, "Unknown backing file format '%s'", backing_fmt);
             goto out;
         }
     }
 
     // The size for the image must always be specified, with one exception:
     // If we are using a backing file, we can obtain the size from there
-    size = get_option_parameter(param, BLOCK_OPT_SIZE);
-    if (size && size->value.n == -1) {
-        if (backing_file && backing_file->value.s) {
+    size = qemu_opt_get_size(opts, BLOCK_OPT_SIZE, 0);
+    if (size == -1) {
+        if (backing_file) {
             uint64_t size;
-            char buf[32];
             int back_flags;
 
             /* backing files always opened read-only */
@@ -4828,18 +4822,16 @@ void bdrv_img_create(const char *filename, const char *fmt,
 
             bs = bdrv_new("");
 
-            ret = bdrv_open(bs, backing_file->value.s, NULL, back_flags,
-                            backing_drv);
+            ret = bdrv_open(bs, backing_file, NULL, back_flags, backing_drv);
             if (ret < 0) {
                 error_setg_errno(errp, -ret, "Could not open '%s'",
-                                 backing_file->value.s);
+                                 backing_file);
                 goto out;
             }
             bdrv_get_geometry(bs, &size);
             size *= 512;
 
-            snprintf(buf, sizeof(buf), "%" PRId64, size);
-            set_option_parameter(param, BLOCK_OPT_SIZE, buf);
+            qemu_opt_replace_set_number(opts, BLOCK_OPT_SIZE, size);
         } else {
             error_setg(errp, "Image creation needs a size parameter");
             goto out;
@@ -4848,17 +4840,17 @@ void bdrv_img_create(const char *filename, const char *fmt,
 
     if (!quiet) {
         printf("Formatting '%s', fmt=%s ", filename, fmt);
-        print_option_parameters(param);
+        qemu_opts_print(opts);
         puts("");
     }
-    ret = bdrv_create(drv, filename, param);
+    ret = bdrv_create(drv, filename, opts);
     if (ret < 0) {
         if (ret == -ENOTSUP) {
             error_setg(errp,"Formatting or formatting option not supported for "
                             "file format '%s'", fmt);
         } else if (ret == -EFBIG) {
             const char *cluster_size_hint = "";
-            if (get_option_parameter(create_options, BLOCK_OPT_CLUSTER_SIZE)) {
+            if (qemu_opt_get_size(opts, BLOCK_OPT_CLUSTER_SIZE, 0)) {
                 cluster_size_hint = " (try using a larger cluster size)";
             }
             error_setg(errp, "The image size is too large for file format '%s'%s",
@@ -4870,8 +4862,10 @@ void bdrv_img_create(const char *filename, const char *fmt,
     }
 
 out:
-    free_option_parameters(create_options);
-    free_option_parameters(param);
+    if (opts) {
+        qemu_opts_del(opts);
+    }
+    qemu_opts_free(create_opts);
 
     if (bs) {
         bdrv_delete(bs);

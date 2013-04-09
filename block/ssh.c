@@ -641,16 +641,20 @@ static int ssh_file_open(BlockDriverState *bs, QDict *options, int bdrv_flags)
     return ret;
 }
 
-static QEMUOptionParameter ssh_create_options[] = {
-    {
-        .name = BLOCK_OPT_SIZE,
-        .type = OPT_SIZE,
-        .help = "Virtual disk size"
-    },
-    { NULL }
+static QemuOptsList ssh_create_opts = {
+    .name = "ssh-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(ssh_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        { /* end of list */ }
+    }
 };
 
-static int ssh_create(const char *filename, QEMUOptionParameter *options)
+static int ssh_create(const char *filename, QemuOpts *opts)
 {
     int r, ret;
     Error *local_err = NULL;
@@ -663,12 +667,7 @@ static int ssh_create(const char *filename, QEMUOptionParameter *options)
     ssh_state_init(&s);
 
     /* Get desired file size. */
-    while (options && options->name) {
-        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            total_size = options->value.n;
-        }
-        options++;
-    }
+    total_size = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
     DPRINTF("total_size=%" PRIi64, total_size);
 
     uri_options = qdict_new();
@@ -1041,7 +1040,7 @@ static BlockDriver bdrv_ssh = {
     .bdrv_co_writev               = ssh_co_writev,
     .bdrv_getlength               = ssh_getlength,
     .bdrv_co_flush_to_disk        = ssh_co_flush,
-    .create_options               = ssh_create_options,
+    .bdrv_create_opts             = &ssh_create_opts,
 };
 
 static void bdrv_ssh_init(void)
