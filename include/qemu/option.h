@@ -108,6 +108,7 @@ struct QemuOptsList {
 };
 
 const char *qemu_opt_get(QemuOpts *opts, const char *name);
+char *qemu_opt_get_del(QemuOpts *opts, const char *name);
 /**
  * qemu_opt_has_help_opt:
  * @opts: options to search for a help request
@@ -121,14 +122,19 @@ const char *qemu_opt_get(QemuOpts *opts, const char *name);
  */
 bool qemu_opt_has_help_opt(QemuOpts *opts);
 bool qemu_opt_get_bool(QemuOpts *opts, const char *name, bool defval);
+bool qemu_opt_get_bool_del(QemuOpts *opts, const char *name, bool defval);
 uint64_t qemu_opt_get_number(QemuOpts *opts, const char *name, uint64_t defval);
 uint64_t qemu_opt_get_size(QemuOpts *opts, const char *name, uint64_t defval);
 int qemu_opt_unset(QemuOpts *opts, const char *name);
+uint64_t qemu_opt_get_size_del(QemuOpts *opts, const char *name,
+                               uint64_t defval);
 int qemu_opt_set(QemuOpts *opts, const char *name, const char *value);
+int qemu_opt_replace_set(QemuOpts *opts, const char *name, const char *value);
 void qemu_opt_set_err(QemuOpts *opts, const char *name, const char *value,
                       Error **errp);
 int qemu_opt_set_bool(QemuOpts *opts, const char *name, bool val);
 int qemu_opt_set_number(QemuOpts *opts, const char *name, int64_t val);
+int qemu_opt_replace_set_number(QemuOpts *opts, const char *name, int64_t val);
 typedef int (*qemu_opt_loopfunc)(const char *name, const char *value, void *opaque);
 int qemu_opt_foreach(QemuOpts *opts, qemu_opt_loopfunc func, void *opaque,
                      int abort_on_failure);
@@ -145,7 +151,10 @@ const char *qemu_opts_id(QemuOpts *opts);
 void qemu_opts_del(QemuOpts *opts);
 void qemu_opts_validate(QemuOpts *opts, const QemuOptDesc *desc, Error **errp);
 int qemu_opts_do_parse(QemuOpts *opts, const char *params, const char *firstname);
-QemuOpts *qemu_opts_parse(QemuOptsList *list, const char *params, int permit_abbrev);
+int qemu_opts_do_parse_replace(QemuOpts *opts, const char *params,
+                               const char *firstname);
+QemuOpts *qemu_opts_parse(QemuOptsList *list, const char *params,
+                          int permit_abbrev);
 void qemu_opts_set_defaults(QemuOptsList *list, const char *params,
                             int permit_abbrev);
 QemuOpts *qemu_opts_from_qdict(QemuOptsList *list, const QDict *qdict,
