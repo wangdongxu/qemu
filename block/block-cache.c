@@ -130,7 +130,7 @@ static int block_cache_entry_flush(BlockDriverState *bs, BlockCache *c, int i)
     } else if (c->table_type == BLOCK_TABLE_L2) {
         BLKDBG_EVENT(bs->file, BLKDBG_L2_UPDATE);
     } else if (c->table_type == BLOCK_TABLE_BITMAP) {
-        BLKDBG_EVENT(bs->file, BLKDBG_COW_WRITE);
+        BLKDBG_EVENT(bs->file, BLKDBG_ADDCOW_WRITE);
     }
 
     ret = bdrv_pwrite(bs->file, c->entries[i].offset,
@@ -265,7 +265,7 @@ static int block_cache_do_get(BlockDriverState *bs, BlockCache *c,
         if (c->table_type == BLOCK_TABLE_L2) {
             BLKDBG_EVENT(bs->file, BLKDBG_L2_LOAD);
         } else if (c->table_type == BLOCK_TABLE_BITMAP) {
-            BLKDBG_EVENT(bs->file, BLKDBG_COW_READ);
+            BLKDBG_EVENT(bs->file, BLKDBG_ADDCOW_READ);
         }
 
         ret = bdrv_pread(bs->file, offset, c->entries[i].table,
