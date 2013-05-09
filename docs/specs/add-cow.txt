@@ -23,7 +23,9 @@ test.add-cow will be calculated from the size of test.raw.
 
 image_fmt can be omitted, in that case image_fmt is assumed to be
 "raw". backing_fmt can also be omitted, add-cow should do a probe
-operation and determine what the backing file's format is.
+operation and determine what the backing file's format is. It is
+recommended to always specify the format for any raw file, because
+probing a raw file is a security hole.
 
 =Specification=
 
@@ -40,12 +42,13 @@ All numbers in add-cow are stored in Little Endian byte order.
 The Header is included in the first bytes:
 (HEADER_SIZE is defined in 40-43 bytes.)
     Byte    0  -  3:    magic
-                        add-cow magic string ("ACOW").
+                        add-cow magic string ("ACOW"). It is coded in
+                        free-form ASCII.
 
             4  -  7:    backing file name offset
                         Offset in the add-cow file at which the backing
                         file name is stored (NB: The string is not
-                        lNUL-terminated).
+                        NUL-terminated).
                         If backing file name does NOT exist, this field
                         will be 0. Must be between 76 and [HEADER_SIZE
                         - 2](a file name must be at least 1 byte).
@@ -74,8 +77,8 @@ The Header is included in the first bytes:
             20 - 23:    cluster bits
                         Number of bits that are used for addressing an
                         offset within a cluster (1 << cluster_bits is
-                        the cluster size). Must not be less than 9
-                        (i.e. 512 byte clusters).
+                        the cluster size). Must not be less than 12
+                        (i.e. 4096 byte clusters).
 
                         Note: qemu as of today has an implementation
                         limit of 2 MB as the maximum cluster size and
@@ -84,8 +87,8 @@ The Header is included in the first bytes:
 
             24 - 31:    features
                         Bitmask of features. If a feature bit is set
-                        but not recognized, the add-cow file should be
-                        dropped. They are not used in now.
+                        but not recognized, the opening the add-cow file must
+                        fail.  No features bits are currently defined.
 
                         Bits 0-63:  Reserved (set to 0)
 
