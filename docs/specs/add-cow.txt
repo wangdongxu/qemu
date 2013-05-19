@@ -2,14 +2,14 @@
 
 The raw file format does not support backing files or copy on write
 feature. The add-cow image format makes it possible to use backing
-files with a image by keeping a separate .add-cow metadata file.
+files with an image by keeping a separate .add-cow metadata file.
 Once all clusters have been written into the image it is safe to
 discard the .add-cow and backing files, then we can use the image
 directly.
 
 An example usage of add-cow would look like:
 (ubuntu.img is a disk image which has an installed OS.)
-    1)  Create a image, such as raw format, with the same size of
+    1)  Create an image, such as raw format, with the same size of
         ubuntu.img:
             qemu-img create -f raw test.raw 8G
     2)  Create an add-cow image which will store dirty bitmap
@@ -47,7 +47,7 @@ The Header is included in the first bytes:
 
             4  -  7:    backing file name offset
                         Offset in the add-cow file at which the backing
-                        file name is stored (NB: The string is not
+                        file name is stored (NB: The string is
                         NUL-terminated).
                         If backing file name does NOT exist, this field
                         will be 0. Must be between 76 and [HEADER_SIZE
@@ -64,7 +64,7 @@ The Header is included in the first bytes:
 
             12 - 15:    image file name offset
                         Offset in the add-cow file at which the image
-                        file name is stored (NB: The string is not
+                        file name is stored (NB: The string is
                         NUL-terminated). It must be between 76 and
                         [HEADER_SIZE - 2]. Image file name size + offset
                         must be no more than HEADER_SIZE.
@@ -113,12 +113,16 @@ The Header is included in the first bytes:
                         0 if backing file name offset is 0. If backing
                         file name offset is non-empty, it must be
                         non-empty. It is coded in free-form ASCII, and
-                        is not NUL-terminated. Zero padded on the right.
+                        is NUL-terminated. Zero padded on the right. If
+                        backing_fmt is omitted, "raw" will be stored
+                        here.
 
             60 - 75:    image file format
                         Format of image file. It must be non-empty. It
-                        is coded in free-form ASCII, and is not
-                        NUL-terminated. Zero padded on the right.
+                        is coded in free-form ASCII, and is
+                        NUL-terminated. Zero padded on the right. If
+                        image_fmt is omitted, must do a probe operation
+                        and store the real format here.
 
             76 - [HEADER_SIZE - 1]:
                         It is used to make sure COW bitmap field starts
