@@ -27,7 +27,7 @@ enum {
     ACOW_MAGIC              = 'A' | 'C' << 8 | 'O' << 16 | 'W' << 24,
     ACOW_CACHE_SIZE         = 16,
     DEFAULT_HEADER_SIZE    = 4096,
-    MIN_CLUSTER_BITS            = 9,
+    MIN_CLUSTER_BITS            = 12,
     MAX_CLUSTER_BITS            = 21,
 };
 
@@ -144,13 +144,13 @@ static int add_cow_create(const char *filename, QemuOpts *opts)
     BlockDriver *drv = bdrv_find_format("add-cow");
     int ret;
 
-    image_len = qemu_opt_get_size(opts, BLOCK_OPT_SIZE, 0);
-    backing_filename = qemu_opt_get(opts, BLOCK_OPT_BACKING_FILE);
-    backing_fmt = qemu_opt_get(opts, BLOCK_OPT_BACKING_FMT);
-    image_filename = qemu_opt_get(opts, BLOCK_OPT_IMAGE_FILE);
-    image_format = qemu_opt_get(opts, BLOCK_OPT_IMAGE_FMT);
-    cluster_size = qemu_opt_get_size(opts, BLOCK_OPT_CLUSTER_SIZE,
-                                     ACOW_CLUSTER_SIZE);
+    image_len = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
+    backing_filename = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
+    backing_fmt = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FMT);
+    image_filename = qemu_opt_get_del(opts, BLOCK_OPT_IMAGE_FILE);
+    image_format = qemu_opt_get_del(opts, BLOCK_OPT_IMAGE_FMT);
+    cluster_size = qemu_opt_get_size_del(opts, BLOCK_OPT_CLUSTER_SIZE,
+                                         ACOW_CLUSTER_SIZE);
 
     header.cluster_bits = ffs(cluster_size) - 1;
     if (header.cluster_bits < MIN_CLUSTER_BITS ||
@@ -162,7 +162,7 @@ static int add_cow_create(const char *filename, QemuOpts *opts)
         return -EINVAL;
     }
 
-   header.header_size = MAX(cluster_size, DEFAULT_HEADER_SIZE);
+    header.header_size = MAX(cluster_size, DEFAULT_HEADER_SIZE);
     if (backing_filename) {
         header.backing_offset = sizeof(header);
         header.backing_size = strlen(backing_filename);
@@ -172,6 +172,7 @@ static int add_cow_create(const char *filename, QemuOpts *opts)
             ret = bdrv_open(backing_bs, backing_filename, NULL,
                             BDRV_O_RDWR | BDRV_O_CACHE_WB, NULL);
             if (ret < 0) {
+                bdrv_delete(backing_bs);
                 return ret;
             }
             backing_fmt = bdrv_get_format_name(backing_bs);
@@ -221,10 +222,10 @@ static int add_cow_create(const char *filename, QemuOpts *opts)
     if (ret < 0) {
         return ret;
     }
-    snprintf(header.backing_fmt, sizeof(header.backing_fmt), "%s",
-             backing_fmt ? backing_fmt : "");
-    snprintf(header.image_fmt, sizeof(header.image_fmt), "%s",
-             image_format ? image_format : "raw");
+    strncpy(header.backing_fmt, backing_fmt ? backing_fmt : "",
+            sizeof(header.backing_fmt));
+    strncpy(header.image_fmt, image_format ? image_format : "raw",
+            sizeof(header.image_fmt));
     add_cow_header_cpu_to_le(&header, &le_header);
     ret = bdrv_pwrite(bs, 0, &le_header, sizeof(le_header));
     if (ret < 0) {
@@ -305,7 +306,7 @@ static int add_cow_open(BlockDriverState *bs, QDict *options, int flags)
     s->cluster_size = 1 << s->header.cluster_bits;
     if (s->header.header_size != MAX(s->cluster_size, DEFAULT_HEADER_SIZE)) {
         char buf[64];
-        snprintf(buf, sizeof(buf), "Header size: %d",
+        snprintf(buf, sizeof(buf), "Header size: %u",
                  s->header.header_size);
         qerror_report(QERR_UNKNOWN_BLOCK_FORMAT_FEATURE,
                       bs->device_name, "add-cow", buf);
@@ -546,6 +547,9 @@ static coroutine_fn int add_cow_co_writev(BlockDriverState *bs,
     int mask = s->cluster_sectors - 1;
     int cluster_mask = s->cluster_size - 1;
 
+    if (remaining_sectors == 0) {
+        return ret;
+    }
     qemu_co_mutex_lock(&s->lock);
     qemu_iovec_init(&hd_qiov, qiov->niov);
     ret = bdrv_co_writev(s->image_hd, sector_num,
@@ -584,8 +588,9 @@ static coroutine_fn int add_cow_co_writev(BlockDriverState *bs,
             if (ret < 0) {
                 goto fail;
             }
-            if ((table[i / 8] & (1 << (i % 8))) == 0) {
-                table[i / 8] |= (1 << (i % 8));
+
+            if ((table[(i / 8) & (s->cluster_size - 1)] & (1 << (i % 8))) == 0) {
+                table[(i / 8) & (s->cluster_size - 1)] |= (1 << (i % 8));
                 block_cache_entry_mark_dirty(s->bitmap_cache, table);
             }
 
