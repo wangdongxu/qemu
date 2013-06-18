@@ -3630,12 +3630,16 @@
 #
 # @help: #optional human readable text string, not suitable for parsing.
 #
-# Since 1.5
+# @default: #optional string representation of the default used
+#           if the option is omitted.
+#
+# Since 1.6
 ##
 { 'type': 'CommandLineParameterInfo',
   'data': { 'name': 'str',
             'type': 'CommandLineParameterType',
-            '*help': 'str' } }
+            '*help': 'str',
+            '*default': 'str'} }
 
 ##
 # @CommandLineOptionInfo:
