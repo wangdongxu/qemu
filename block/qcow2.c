@@ -1460,6 +1460,218 @@ static int qcow2_create(const char *filename, QEMUOptionParameter *options)
                          cluster_size, prealloc, options, version);
 }
 
+static int qcow2_create2_new(const char *filename, int64_t total_size,
+                             char *backing_file, char *backing_format,
+                             int flags, size_t cluster_size, int prealloc,
+                             QemuOpts *opts, int version)
+{
+    /* Calculate cluster_bits */
+    int cluster_bits;
+    int ret = 0;
+    cluster_bits = ffs(cluster_size) - 1;
+    if (cluster_bits < MIN_CLUSTER_BITS || cluster_bits > MAX_CLUSTER_BITS ||
+        (1 << cluster_bits) != cluster_size) {
+        error_report(
+            "Cluster size must be a power of two between %d and %dk",
+            1 << MIN_CLUSTER_BITS, 1 << (MAX_CLUSTER_BITS - 10));
+        ret = -EINVAL;
+        goto finish;
+    }
+
+    /*
+     * Open the image file and write a minimal qcow2 header.
+     *
+     * We keep things simple and start with a zero-sized image. We also
+     * do without refcount blocks or a L1 table for now. We'll fix the
+     * inconsistency later.
+     *
+     * We do need a refcount table because growing the refcount table means
+     * allocating two new refcount blocks - the seconds of which would be at
+     * 2 GB for 64k clusters, and we don't want to have a 2 GB initial file
+     * size for any qcow2 image.
+     */
+    BlockDriverState *bs;
+    QCowHeader header;
+    uint8_t *refcount_table;
+
+    ret = bdrv_create_file_new(filename, opts);
+    if (ret < 0) {
+        goto finish;
+    }
+
+    ret = bdrv_file_open(&bs, filename, NULL, BDRV_O_RDWR);
+    if (ret < 0) {
+        goto finish;
+    }
+
+    /* Write the header */
+    memset(&header, 0, sizeof(header));
+    header.magic = cpu_to_be32(QCOW_MAGIC);
+    header.version = cpu_to_be32(version);
+    header.cluster_bits = cpu_to_be32(cluster_bits);
+    header.size = cpu_to_be64(0);
+    header.l1_table_offset = cpu_to_be64(0);
+    header.l1_size = cpu_to_be32(0);
+    header.refcount_table_offset = cpu_to_be64(cluster_size);
+    header.refcount_table_clusters = cpu_to_be32(1);
+    header.refcount_order = cpu_to_be32(3 + REFCOUNT_SHIFT);
+    header.header_length = cpu_to_be32(sizeof(header));
+
+    if (flags & BLOCK_FLAG_ENCRYPT) {
+        header.crypt_method = cpu_to_be32(QCOW_CRYPT_AES);
+    } else {
+        header.crypt_method = cpu_to_be32(QCOW_CRYPT_NONE);
+    }
+
+    if (flags & BLOCK_FLAG_LAZY_REFCOUNTS) {
+        header.compatible_features |=
+            cpu_to_be64(QCOW2_COMPAT_LAZY_REFCOUNTS);
+    }
+
+    ret = bdrv_pwrite(bs, 0, &header, sizeof(header));
+    if (ret < 0) {
+        goto out;
+    }
+
+    /* Write an empty refcount table */
+    refcount_table = g_malloc0(cluster_size);
+    ret = bdrv_pwrite(bs, cluster_size, refcount_table, cluster_size);
+    g_free(refcount_table);
+
+    if (ret < 0) {
+        goto out;
+    }
+
+    bdrv_close(bs);
+
+    /*
+     * And now open the image and make it consistent first (i.e. increase the
+     * refcount of the cluster that is occupied by the header and the refcount
+     * table)
+     */
+    BlockDriver *drv = bdrv_find_format("qcow2");
+    assert(drv != NULL);
+    ret = bdrv_open(bs, filename, NULL,
+        BDRV_O_RDWR | BDRV_O_CACHE_WB | BDRV_O_NO_FLUSH, drv);
+    if (ret < 0) {
+        goto out;
+    }
+
+    ret = qcow2_alloc_clusters(bs, 2 * cluster_size);
+    if (ret < 0) {
+        goto out;
+
+    } else if (ret != 0) {
+        error_report("Huh, first cluster in empty image is already in use?");
+        abort();
+    }
+
+    /* Okay, now that we have a valid image, let's give it the right size */
+    ret = bdrv_truncate(bs, total_size * BDRV_SECTOR_SIZE);
+    if (ret < 0) {
+        goto out;
+    }
+
+    /* Want a backing file? There you go.*/
+    if (backing_file) {
+        ret = bdrv_change_backing_file(bs, backing_file, backing_format);
+        if (ret < 0) {
+            goto out;
+        }
+    }
+
+    /* And if we're supposed to preallocate metadata, do that now */
+    if (prealloc) {
+        BDRVQcowState *s = bs->opaque;
+        qemu_co_mutex_lock(&s->lock);
+        ret = preallocate(bs);
+        qemu_co_mutex_unlock(&s->lock);
+        if (ret < 0) {
+            goto out;
+        }
+    }
+
+    ret = 0;
+out:
+    bdrv_delete(bs);
+finish:
+    g_free(backing_file);
+    g_free(backing_format);
+    return ret;
+}
+
+static int qcow2_create_new(const char *filename, QemuOpts *opts)
+{
+    char *backing_file = NULL;
+    char *backing_fmt = NULL;
+    uint64_t sectors = 0;
+    int flags = 0;
+    size_t cluster_size = DEFAULT_CLUSTER_SIZE;
+    int prealloc = 0;
+    int version = 2;
+    char *buf;
+    int ret = 0;
+
+    /* Read out options */
+    sectors = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0) / 512;
+    backing_file = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
+    backing_fmt = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FMT);
+    if (qemu_opt_get_bool_del(opts, BLOCK_OPT_ENCRYPT, false)) {
+        flags |= BLOCK_FLAG_ENCRYPT;
+    }
+    cluster_size = qemu_opt_get_size_del(opts, BLOCK_OPT_CLUSTER_SIZE,
+                                         DEFAULT_CLUSTER_SIZE);
+    buf = qemu_opt_get_del(opts, BLOCK_OPT_PREALLOC);
+    if (!buf || !strcmp(buf, "off")) {
+        prealloc = 0;
+    } else if (!strcmp(buf, "metadata")) {
+        prealloc = 1;
+    } else {
+        fprintf(stderr, "Invalid preallocation mode: '%s'\n",
+            buf);
+        ret = -EINVAL;
+        goto finish;
+    }
+    g_free(buf);
+    buf = qemu_opt_get_del(opts, BLOCK_OPT_COMPAT_LEVEL);
+    if (!buf || !strcmp(buf, "0.10")) {
+        version = 2;
+    } else if (!strcmp(buf, "1.1")) {
+        version = 3;
+    } else {
+        fprintf(stderr, "Invalid compatibility level: '%s'\n",
+            buf);
+        ret = -EINVAL;
+        goto finish;
+    }
+
+    if (qemu_opt_get_bool_del(opts, BLOCK_OPT_LAZY_REFCOUNTS, false)) {
+        flags |= BLOCK_FLAG_LAZY_REFCOUNTS;
+    }
+
+    if (backing_file && prealloc) {
+        fprintf(stderr, "Backing file and preallocation cannot be used at "
+            "the same time\n");
+        ret = -EINVAL;
+        goto finish;
+    }
+
+    if (version < 3 && (flags & BLOCK_FLAG_LAZY_REFCOUNTS)) {
+        fprintf(stderr, "Lazy refcounts only supported with compatibility "
+                "level 1.1 and above (use compat=1.1 or greater)\n");
+        ret = -EINVAL;
+        goto finish;
+    }
+
+    return qcow2_create2_new(filename, sectors, backing_file, backing_fmt, flags,
+                             cluster_size, prealloc, opts, version);
+finish:
+    g_free(backing_file);
+    g_free(backing_fmt);
+    g_free(buf);
+    return ret;
+}
+
 static int qcow2_make_empty(BlockDriverState *bs)
 {
 #if 0
@@ -1777,6 +1989,57 @@ static QEMUOptionParameter qcow2_create_options[] = {
     { NULL }
 };
 
+static QemuOptsList qcow2_create_opts = {
+    .name = "qcow2-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(qcow2_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_COMPAT_LEVEL,
+            .type = QEMU_OPT_STRING,
+            .help = "Compatibility level (0.10 or 1.1)"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FILE,
+            .type = QEMU_OPT_STRING,
+            .help = "File name of a base image"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FMT,
+            .type = QEMU_OPT_STRING,
+            .help = "Image format of the base image"
+        },
+        {
+            .name = BLOCK_OPT_ENCRYPT,
+            .type = QEMU_OPT_BOOL,
+            .help = "Encrypt the image",
+            .def_value_str = "off"
+        },
+        {
+            .name = BLOCK_OPT_CLUSTER_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "qcow2 cluster size",
+            .def_value_str = stringify(DEFAULT_CLUSTER_SIZE)
+        },
+        {
+            .name = BLOCK_OPT_PREALLOC,
+            .type = QEMU_OPT_STRING,
+            .help = "Preallocation mode (allowed values: off, metadata)"
+        },
+        {
+            .name = BLOCK_OPT_LAZY_REFCOUNTS,
+            .type = QEMU_OPT_BOOL,
+            .help = "Postpone refcount updates",
+            .def_value_str = "off"
+        },
+        { /* end of list */ }
+    }
+};
+
 static BlockDriver bdrv_qcow2 = {
     .format_name        = "qcow2",
     .instance_size      = sizeof(BDRVQcowState),
@@ -1785,6 +2048,7 @@ static BlockDriver bdrv_qcow2 = {
     .bdrv_close         = qcow2_close,
     .bdrv_reopen_prepare  = qcow2_reopen_prepare,
     .bdrv_create        = qcow2_create,
+    .bdrv_create_new    = qcow2_create_new,
     .bdrv_has_zero_init = bdrv_has_zero_init_1,
     .bdrv_co_is_allocated = qcow2_co_is_allocated,
     .bdrv_set_key       = qcow2_set_key,
@@ -1814,6 +2078,7 @@ static BlockDriver bdrv_qcow2 = {
     .bdrv_invalidate_cache      = qcow2_invalidate_cache,
 
     .create_options = qcow2_create_options,
+    .bdrv_create_opts = &qcow2_create_opts,
     .bdrv_check = qcow2_check,
 };
 
