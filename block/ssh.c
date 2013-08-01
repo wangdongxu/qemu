@@ -709,6 +709,73 @@ static int ssh_create(const char *filename, QEMUOptionParameter *options)
     return ret;
 }
 
+static QemuOptsList ssh_create_opts = {
+    .name = "ssh-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(ssh_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        { /* end of list */ }
+    }
+};
+
+static int ssh_create_new(const char *filename, QemuOpts *opts)
+{
+    int r, ret;
+    Error *local_err = NULL;
+    int64_t total_size = 0;
+    QDict *uri_options = NULL;
+    BDRVSSHState s;
+    ssize_t r2;
+    char c[1] = { '\0' };
+
+    ssh_state_init(&s);
+
+    /* Get desired file size. */
+    total_size = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
+    DPRINTF("total_size=%" PRIi64, total_size);
+
+    uri_options = qdict_new();
+    r = parse_uri(filename, uri_options, &local_err);
+    if (r < 0) {
+        qerror_report_err(local_err);
+        error_free(local_err);
+        ret = r;
+        goto out;
+    }
+
+    r = connect_to_ssh(&s, uri_options,
+                       LIBSSH2_FXF_READ|LIBSSH2_FXF_WRITE|
+                       LIBSSH2_FXF_CREAT|LIBSSH2_FXF_TRUNC, 0644);
+    if (r < 0) {
+        ret = r;
+        goto out;
+    }
+
+    if (total_size > 0) {
+        libssh2_sftp_seek64(s.sftp_handle, total_size-1);
+        r2 = libssh2_sftp_write(s.sftp_handle, c, 1);
+        if (r2 < 0) {
+            sftp_error_report(&s, "truncate failed");
+            ret = -EINVAL;
+            goto out;
+        }
+        s.attrs.filesize = total_size;
+    }
+
+    ret = 0;
+
+ out:
+    ssh_state_free(&s);
+    if (uri_options != NULL) {
+        QDECREF(uri_options);
+    }
+    return ret;
+}
+
 static void ssh_close(BlockDriverState *bs)
 {
     BDRVSSHState *s = bs->opaque;
@@ -1051,6 +1118,7 @@ static BlockDriver bdrv_ssh = {
     .bdrv_parse_filename          = ssh_parse_filename,
     .bdrv_file_open               = ssh_file_open,
     .bdrv_create                  = ssh_create,
+    .bdrv_create_new              = ssh_create_new,
     .bdrv_close                   = ssh_close,
     .bdrv_has_zero_init           = ssh_has_zero_init,
     .bdrv_co_readv                = ssh_co_readv,
@@ -1058,6 +1126,7 @@ static BlockDriver bdrv_ssh = {
     .bdrv_getlength               = ssh_getlength,
     .bdrv_co_flush_to_disk        = ssh_co_flush,
     .create_options               = ssh_create_options,
+    .bdrv_create_opts             = &ssh_create_opts,
 };
 
 static void bdrv_ssh_init(void)
