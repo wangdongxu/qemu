@@ -1720,6 +1720,197 @@ exit:
     return ret;
 }
 
+static int vmdk_create_new(const char *filename, QemuOpts *opts)
+{
+    int fd, idx = 0;
+    char desc[BUF_SIZE];
+    int64_t total_size = 0, filesize;
+    char *adapter_type = NULL;
+    char *backing_file = NULL;
+    const char *fmt = NULL;
+    int flags = 0;
+    int ret = 0;
+    bool flat, split, compress;
+    char ext_desc_lines[BUF_SIZE] = "";
+    char path[PATH_MAX], prefix[PATH_MAX], postfix[PATH_MAX];
+    const int64_t split_size = 0x80000000;  /* VMDK has constant split size */
+    const char *desc_extent_line;
+    char parent_desc_line[BUF_SIZE] = "";
+    uint32_t parent_cid = 0xffffffff;
+    uint32_t number_heads = 16;
+    bool zeroed_grain = false;
+    const char desc_template[] =
+        "# Disk DescriptorFile\n"
+        "version=1\n"
+        "CID=%x\n"
+        "parentCID=%x\n"
+        "createType=\"%s\"\n"
+        "%s"
+        "\n"
+        "# Extent description\n"
+        "%s"
+        "\n"
+        "# The Disk Data Base\n"
+        "#DDB\n"
+        "\n"
+        "ddb.virtualHWVersion = \"%d\"\n"
+        "ddb.geometry.cylinders = \"%" PRId64 "\"\n"
+        "ddb.geometry.heads = \"%d\"\n"
+        "ddb.geometry.sectors = \"63\"\n"
+        "ddb.adapterType = \"%s\"\n";
+
+    if (filename_decompose(filename, path, prefix, postfix, PATH_MAX)) {
+        ret = -EINVAL;
+        goto finish;
+    }
+    /* Read out opts */
+    total_size = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
+    adapter_type = qemu_opt_get_del(opts, BLOCK_OPT_ADAPTER_TYPE);
+    backing_file = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
+    if (qemu_opt_get_bool_del(opts, BLOCK_OPT_COMPAT6, false)) {
+        flags |= BLOCK_FLAG_COMPAT6;
+    }
+    fmt = qemu_opt_get_del(opts, BLOCK_OPT_SUBFMT);
+    if (qemu_opt_get_bool_del(opts, BLOCK_OPT_ZEROED_GRAIN, false)) {
+        zeroed_grain = true;
+    }
+    if (!adapter_type) {
+        adapter_type = g_strdup("ide");
+    } else if (strcmp(adapter_type, "ide") &&
+               strcmp(adapter_type, "buslogic") &&
+               strcmp(adapter_type, "lsilogic") &&
+               strcmp(adapter_type, "legacyESX")) {
+        fprintf(stderr, "VMDK: Unknown adapter type: '%s'.\n", adapter_type);
+        ret = -EINVAL;
+        goto finish;
+    }
+    if (strcmp(adapter_type, "ide") != 0) {
+        /* that's the number of heads with which vmware operates when
+           creating, exporting, etc. vmdk files with a non-ide adapter type */
+        number_heads = 255;
+    }
+    if (!fmt) {
+        /* Default format to monolithicSparse */
+        fmt = "monolithicSparse";
+    } else if (strcmp(fmt, "monolithicFlat") &&
+               strcmp(fmt, "monolithicSparse") &&
+               strcmp(fmt, "twoGbMaxExtentSparse") &&
+               strcmp(fmt, "twoGbMaxExtentFlat") &&
+               strcmp(fmt, "streamOptimized")) {
+        fprintf(stderr, "VMDK: Unknown subformat: %s\n", fmt);
+        ret = -EINVAL;
+        goto finish;
+    }
+    split = !(strcmp(fmt, "twoGbMaxExtentFlat") &&
+              strcmp(fmt, "twoGbMaxExtentSparse"));
+    flat = !(strcmp(fmt, "monolithicFlat") &&
+             strcmp(fmt, "twoGbMaxExtentFlat"));
+    compress = !strcmp(fmt, "streamOptimized");
+    if (flat) {
+        desc_extent_line = "RW %lld FLAT \"%s\" 0\n";
+    } else {
+        desc_extent_line = "RW %lld SPARSE \"%s\"\n";
+    }
+    if (flat && backing_file) {
+        /* not supporting backing file for flat image */
+        ret = -ENOTSUP;
+        goto finish;
+    }
+    if (backing_file) {
+        BlockDriverState *bs = bdrv_new("");
+        ret = bdrv_open(bs, backing_file, NULL, 0, NULL);
+        if (ret != 0) {
+            bdrv_delete(bs);
+            goto finish;
+        }
+        if (strcmp(bs->drv->format_name, "vmdk")) {
+            bdrv_delete(bs);
+            ret = -EINVAL;
+            goto finish;
+        }
+        parent_cid = vmdk_read_cid(bs, 0);
+        bdrv_delete(bs);
+        snprintf(parent_desc_line, sizeof(parent_desc_line),
+                "parentFileNameHint=\"%s\"", backing_file);
+    }
+
+    /* Create extents */
+    filesize = total_size;
+    while (filesize > 0) {
+        char desc_line[BUF_SIZE];
+        char ext_filename[PATH_MAX];
+        char desc_filename[PATH_MAX];
+        int64_t size = filesize;
+
+        if (split && size > split_size) {
+            size = split_size;
+        }
+        if (split) {
+            snprintf(desc_filename, sizeof(desc_filename), "%s-%c%03d%s",
+                    prefix, flat ? 'f' : 's', ++idx, postfix);
+        } else if (flat) {
+            snprintf(desc_filename, sizeof(desc_filename), "%s-flat%s",
+                    prefix, postfix);
+        } else {
+            snprintf(desc_filename, sizeof(desc_filename), "%s%s",
+                    prefix, postfix);
+        }
+        snprintf(ext_filename, sizeof(ext_filename), "%s%s",
+                path, desc_filename);
+
+        if (vmdk_create_extent(ext_filename, size,
+                               flat, compress, zeroed_grain)) {
+            return -EINVAL;
+        }
+        filesize -= size;
+
+        /* Format description line */
+        snprintf(desc_line, sizeof(desc_line),
+                    desc_extent_line, size / 512, desc_filename);
+        pstrcat(ext_desc_lines, sizeof(ext_desc_lines), desc_line);
+    }
+    /* generate descriptor file */
+    snprintf(desc, sizeof(desc), desc_template,
+            (unsigned int)time(NULL),
+            parent_cid,
+            fmt,
+            parent_desc_line,
+            ext_desc_lines,
+            (flags & BLOCK_FLAG_COMPAT6 ? 6 : 4),
+            total_size / (int64_t)(63 * number_heads * 512), number_heads,
+                adapter_type);
+    if (split || flat) {
+        fd = qemu_open(filename,
+                       O_WRONLY | O_CREAT | O_TRUNC | O_BINARY | O_LARGEFILE,
+                       0644);
+    } else {
+        fd = qemu_open(filename,
+                       O_WRONLY | O_BINARY | O_LARGEFILE,
+                       0644);
+    }
+    if (fd < 0) {
+        ret = -errno;
+        goto finish;
+    }
+    /* the descriptor offset = 0x200 */
+    if (!split && !flat && 0x200 != lseek(fd, 0x200, SEEK_SET)) {
+        ret = -errno;
+        goto exit;
+    }
+    ret = qemu_write_full(fd, desc, strlen(desc));
+    if (ret != strlen(desc)) {
+        ret = -errno;
+        goto exit;
+    }
+    ret = 0;
+exit:
+    qemu_close(fd);
+finish:
+    g_free(adapter_type);
+    g_free(backing_file);
+    return ret;
+}
+
 static void vmdk_close(BlockDriverState *bs)
 {
     BDRVVmdkState *s = bs->opaque;
@@ -1823,6 +2014,49 @@ static QEMUOptionParameter vmdk_create_options[] = {
     { NULL }
 };
 
+static QemuOptsList vmdk_create_opts = {
+    .name = "vmdk-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(vmdk_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_ADAPTER_TYPE,
+            .type = QEMU_OPT_STRING,
+            .help = "Virtual adapter type, can be one of "
+                    "ide (default), lsilogic, buslogic or legacyESX"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FILE,
+            .type = QEMU_OPT_STRING,
+            .help = "File name of a base image"
+        },
+        {
+            .name = BLOCK_OPT_COMPAT6,
+            .type = QEMU_OPT_BOOL,
+            .help = "VMDK version 6 image",
+            .def_value_str = "off"
+        },
+        {
+            .name = BLOCK_OPT_SUBFMT,
+            .type = QEMU_OPT_STRING,
+            .help =
+                "VMDK flat extent format, can be one of "
+                "{monolithicSparse (default) | monolithicFlat | twoGbMaxExtentSparse | twoGbMaxExtentFlat | streamOptimized} "
+        },
+        {
+            .name = BLOCK_OPT_ZEROED_GRAIN,
+            .type = QEMU_OPT_BOOL,
+            .help = "Enable efficient zero writes "
+                    "using the zeroed-grain GTE feature"
+        },
+        { /* end of list */ }
+    }
+};
+
 static BlockDriver bdrv_vmdk = {
     .format_name                  = "vmdk",
     .instance_size                = sizeof(BDRVVmdkState),
@@ -1834,12 +2068,14 @@ static BlockDriver bdrv_vmdk = {
     .bdrv_co_write_zeroes         = vmdk_co_write_zeroes,
     .bdrv_close                   = vmdk_close,
     .bdrv_create                  = vmdk_create,
+    .bdrv_create_new              = vmdk_create_new,
     .bdrv_co_flush_to_disk        = vmdk_co_flush,
     .bdrv_co_is_allocated         = vmdk_co_is_allocated,
     .bdrv_get_allocated_file_size = vmdk_get_allocated_file_size,
     .bdrv_has_zero_init           = vmdk_has_zero_init,
 
     .create_options               = vmdk_create_options,
+    .bdrv_create_opts = &vmdk_create_opts,
 };
 
 static void bdrv_vmdk_init(void)
