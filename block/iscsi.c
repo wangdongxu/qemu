@@ -1305,6 +1305,65 @@ static QEMUOptionParameter iscsi_create_options[] = {
     { NULL }
 };
 
+static int iscsi_create_new(const char *filename, QemuOpts *opts)
+{
+    int ret = 0;
+    int64_t total_size = 0;
+    BlockDriverState bs;
+    IscsiLun *iscsilun = NULL;
+    QDict *bs_options;
+
+    memset(&bs, 0, sizeof(BlockDriverState));
+
+    /* Read out options */
+    total_size =
+        qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0) / BDRV_SECTOR_SIZE;
+    bs.opaque = g_malloc0(sizeof(struct IscsiLun));
+    iscsilun = bs.opaque;
+
+    bs_options = qdict_new();
+    qdict_put(bs_options, "filename", qstring_from_str(filename));
+    ret = iscsi_open(&bs, bs_options, 0);
+    QDECREF(bs_options);
+
+    if (ret != 0) {
+        goto out;
+    }
+    if (iscsilun->nop_timer) {
+        qemu_del_timer(iscsilun->nop_timer);
+        qemu_free_timer(iscsilun->nop_timer);
+    }
+    if (iscsilun->type != TYPE_DISK) {
+        ret = -ENODEV;
+        goto out;
+    }
+    if (bs.total_sectors < total_size) {
+        ret = -ENOSPC;
+        goto out;
+    }
+
+    ret = 0;
+out:
+    if (iscsilun->iscsi != NULL) {
+        iscsi_destroy_context(iscsilun->iscsi);
+    }
+    g_free(bs.opaque);
+    return ret;
+}
+
+static QemuOptsList iscsi_create_opts = {
+    .name = "iscsi-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(iscsi_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        { /* end of list */ }
+    }
+};
+
 static BlockDriver bdrv_iscsi = {
     .format_name     = "iscsi",
     .protocol_name   = "iscsi",
@@ -1313,7 +1372,9 @@ static BlockDriver bdrv_iscsi = {
     .bdrv_file_open  = iscsi_open,
     .bdrv_close      = iscsi_close,
     .bdrv_create     = iscsi_create,
+    .bdrv_create_new = iscsi_create_new,
     .create_options  = iscsi_create_options,
+    .bdrv_create_opts = &iscsi_create_opts,
 
     .bdrv_getlength  = iscsi_getlength,
     .bdrv_truncate   = iscsi_truncate,
