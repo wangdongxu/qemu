@@ -139,6 +139,24 @@ static QEMUOptionParameter raw_create_options[] = {
     { NULL }
 };
 
+static int raw_create_new(const char *filename, QemuOpts *opts)
+{
+    return bdrv_create_file_new(filename, opts);
+}
+
+static QemuOptsList raw_create_opts = {
+    .name = "raw-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(raw_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        { /* end of list */ }
+    }
+};
+
 static int raw_has_zero_init(BlockDriverState *bs)
 {
     return bdrv_has_zero_init(bs->file);
@@ -180,7 +198,9 @@ static BlockDriver bdrv_raw = {
     .bdrv_aio_ioctl     = raw_aio_ioctl,
 
     .bdrv_create        = raw_create,
+    .bdrv_create_new    = raw_create_new,
     .create_options     = raw_create_options,
+    .bdrv_create_opts   = &raw_create_opts,
     .bdrv_has_zero_init = raw_has_zero_init,
 };
 
