@@ -105,6 +105,7 @@ struct BlockDriver {
     void (*bdrv_close)(BlockDriverState *bs);
     void (*bdrv_rebind)(BlockDriverState *bs);
     int (*bdrv_create)(const char *filename, QEMUOptionParameter *options);
+    int (*bdrv_create_new)(const char *filename, QemuOpts *opts);
     int (*bdrv_set_key)(BlockDriverState *bs, const char *key);
     int (*bdrv_make_empty)(BlockDriverState *bs);
     /* aio */
@@ -195,6 +196,7 @@ struct BlockDriver {
 
     /* List of options for creating images, terminated by name == NULL */
     QEMUOptionParameter *create_options;
+    QemuOptsList *bdrv_create_opts;
 
 
     /*

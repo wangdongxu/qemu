@@ -366,6 +366,7 @@ typedef struct CreateCo {
     BlockDriver *drv;
     char *filename;
     QEMUOptionParameter *options;
+    QemuOpts *opts;
     int ret;
 } CreateCo;
 
@@ -423,6 +424,56 @@ int bdrv_create_file(const char* filename, QEMUOptionParameter *options)
     }
 
     return bdrv_create(drv, filename, options);
+}
+
+int bdrv_create_new(BlockDriver *drv, const char* filename, QemuOpts *opts)
+{
+    int ret;
+
+    Coroutine *co;
+    CreateCo cco = {
+        .drv = drv,
+        .filename = g_strdup(filename),
+        .opts = opts ?: qemu_opts_create_nofail(drv->bdrv_create_opts),
+        .ret = NOT_DONE,
+    };
+
+    if (!drv->bdrv_create) {
+        ret = -ENOTSUP;
+        goto out;
+    }
+
+    if (qemu_in_coroutine()) {
+        /* Fast-path if already in coroutine context */
+        bdrv_create_co_entry(&cco);
+    } else {
+        co = qemu_coroutine_create(bdrv_create_co_entry);
+        qemu_coroutine_enter(co, &cco);
+        while (cco.ret == NOT_DONE) {
+            qemu_aio_wait();
+        }
+    }
+
+    ret = cco.ret;
+
+out:
+    if (!opts) {
+        qemu_opts_del(cco.opts);
+    }
+    g_free(cco.filename);
+    return ret;
+}
+
+int bdrv_create_file_new(const char *filename, QemuOpts *opts)
+{
+    BlockDriver *drv;
+
+    drv = bdrv_find_protocol(filename, true);
+    if (drv == NULL) {
+        return -ENOENT;
+    }
+
+    return bdrv_create_new(drv, filename, opts);
 }
 
 /*
