@@ -332,6 +332,83 @@ static QEMUOptionParameter cow_create_options[] = {
     { NULL }
 };
 
+static int cow_create_new(const char *filename, QemuOpts *opts)
+{
+    struct cow_header_v2 cow_header;
+    struct stat st;
+    int64_t image_sectors = 0;
+    char *image_filename = NULL;
+    int ret;
+    BlockDriverState *cow_bs;
+
+    /* Read out opts */
+    image_sectors = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0) / 512;
+    image_filename = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
+
+    ret = bdrv_create_file_new(filename, opts);
+    if (ret < 0) {
+        goto finish;
+    }
+
+    ret = bdrv_file_open(&cow_bs, filename, NULL, BDRV_O_RDWR);
+    if (ret < 0) {
+        goto finish;
+    }
+
+    memset(&cow_header, 0, sizeof(cow_header));
+    cow_header.magic = cpu_to_be32(COW_MAGIC);
+    cow_header.version = cpu_to_be32(COW_VERSION);
+    if (image_filename) {
+        /* Note: if no file, we put a dummy mtime */
+        cow_header.mtime = cpu_to_be32(0);
+
+        if (stat(image_filename, &st) != 0) {
+            goto mtime_fail;
+        }
+        cow_header.mtime = cpu_to_be32(st.st_mtime);
+    mtime_fail:
+        pstrcpy(cow_header.backing_file, sizeof(cow_header.backing_file),
+                image_filename);
+    }
+    cow_header.sectorsize = cpu_to_be32(512);
+    cow_header.size = cpu_to_be64(image_sectors * 512);
+    ret = bdrv_pwrite(cow_bs, 0, &cow_header, sizeof(cow_header));
+    if (ret < 0) {
+        goto exit;
+    }
+
+    /* resize to include at least all the bitmap */
+    ret = bdrv_truncate(cow_bs,
+        sizeof(cow_header) + ((image_sectors + 7) >> 3));
+    if (ret < 0) {
+        goto exit;
+    }
+
+exit:
+    bdrv_delete(cow_bs);
+finish:
+    g_free(image_filename);
+    return ret;
+}
+
+static QemuOptsList cow_create_opts = {
+    .name = "cow-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(cow_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FILE,
+            .type = QEMU_OPT_STRING,
+            .help = "File name of a base image"
+        },
+        { /* end of list */ }
+    }
+};
+
 static BlockDriver bdrv_cow = {
     .format_name    = "cow",
     .instance_size  = sizeof(BDRVCowState),
@@ -340,6 +417,7 @@ static BlockDriver bdrv_cow = {
     .bdrv_open      = cow_open,
     .bdrv_close     = cow_close,
     .bdrv_create    = cow_create,
+    .bdrv_create_new = cow_create_new,
     .bdrv_has_zero_init     = bdrv_has_zero_init_1,
 
     .bdrv_read              = cow_co_read,
@@ -347,6 +425,7 @@ static BlockDriver bdrv_cow = {
     .bdrv_co_is_allocated   = cow_co_is_allocated,
 
     .create_options = cow_create_options,
+    .bdrv_create_opts       = &cow_create_opts,
 };
 
 static void bdrv_cow_init(void)
