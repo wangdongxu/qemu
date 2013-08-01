@@ -755,6 +755,107 @@ exit:
     return ret;
 }
 
+static int qcow_create_new(const char *filename, QemuOpts *opts)
+{
+    int header_size, backing_filename_len, l1_size, shift, i;
+    QCowHeader header;
+    uint8_t *tmp;
+    int64_t total_size = 0;
+    char *backing_file = NULL;
+    int flags = 0;
+    int ret;
+    BlockDriverState *qcow_bs;
+
+    /* Read out opts */
+    total_size = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0) / 512;
+    backing_file = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
+    if (qemu_opt_get_bool_del(opts, BLOCK_OPT_ENCRYPT, false)) {
+        flags |= BLOCK_FLAG_ENCRYPT;
+    }
+
+    ret = bdrv_create_file_new(filename, opts);
+    if (ret < 0) {
+        goto finish;
+    }
+
+    ret = bdrv_file_open(&qcow_bs, filename, NULL, BDRV_O_RDWR);
+    if (ret < 0) {
+        goto finish;
+    }
+
+    ret = bdrv_truncate(qcow_bs, 0);
+    if (ret < 0) {
+        goto exit;
+    }
+
+    memset(&header, 0, sizeof(header));
+    header.magic = cpu_to_be32(QCOW_MAGIC);
+    header.version = cpu_to_be32(QCOW_VERSION);
+    header.size = cpu_to_be64(total_size * 512);
+    header_size = sizeof(header);
+    backing_filename_len = 0;
+    if (backing_file) {
+        if (strcmp(backing_file, "fat:")) {
+            header.backing_file_offset = cpu_to_be64(header_size);
+            backing_filename_len = strlen(backing_file);
+            header.backing_file_size = cpu_to_be32(backing_filename_len);
+            header_size += backing_filename_len;
+        } else {
+            /* special backing file for vvfat */
+            backing_file = NULL;
+        }
+        header.cluster_bits = 9; /* 512 byte cluster to avoid copying
+                                    unmodifyed sectors */
+        header.l2_bits = 12; /* 32 KB L2 tables */
+    } else {
+        header.cluster_bits = 12; /* 4 KB clusters */
+        header.l2_bits = 9; /* 4 KB L2 tables */
+    }
+    header_size = (header_size + 7) & ~7;
+    shift = header.cluster_bits + header.l2_bits;
+    l1_size = ((total_size * 512) + (1LL << shift) - 1) >> shift;
+
+    header.l1_table_offset = cpu_to_be64(header_size);
+    if (flags & BLOCK_FLAG_ENCRYPT) {
+        header.crypt_method = cpu_to_be32(QCOW_CRYPT_AES);
+    } else {
+        header.crypt_method = cpu_to_be32(QCOW_CRYPT_NONE);
+    }
+
+    /* write all the data */
+    ret = bdrv_pwrite(qcow_bs, 0, &header, sizeof(header));
+    if (ret != sizeof(header)) {
+        goto exit;
+    }
+
+    if (backing_file) {
+        ret = bdrv_pwrite(qcow_bs, sizeof(header),
+            backing_file, backing_filename_len);
+        if (ret != backing_filename_len) {
+            goto exit;
+        }
+    }
+
+    tmp = g_malloc0(BDRV_SECTOR_SIZE);
+    for (i = 0; i < ((sizeof(uint64_t)*l1_size + BDRV_SECTOR_SIZE - 1)/
+        BDRV_SECTOR_SIZE); i++) {
+        ret = bdrv_pwrite(qcow_bs, header_size +
+            BDRV_SECTOR_SIZE*i, tmp, BDRV_SECTOR_SIZE);
+        if (ret != BDRV_SECTOR_SIZE) {
+            g_free(tmp);
+            goto exit;
+        }
+    }
+
+    g_free(tmp);
+    ret = 0;
+exit:
+    bdrv_delete(qcow_bs);
+finish:
+    g_free(backing_file);
+    return ret;
+}
+
 static int qcow_make_empty(BlockDriverState *bs)
 {
     BDRVQcowState *s = bs->opaque;
@@ -864,6 +965,29 @@ static int qcow_get_info(BlockDriverState *bs, BlockDriverInfo *bdi)
     return 0;
 }
 
+static QemuOptsList qcow_create_opts = {
+    .name = "qcow-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(qcow_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FILE,
+            .type = QEMU_OPT_STRING,
+            .help = "File name of a base image"
+        },
+        {
+            .name = BLOCK_OPT_ENCRYPT,
+            .type = QEMU_OPT_BOOL,
+            .help = "Encrypt the image",
+            .def_value_str = "off"
+        },
+        { /* end of list */ }
+    }
+};
 
 static QEMUOptionParameter qcow_create_options[] = {
     {
@@ -892,6 +1016,7 @@ static BlockDriver bdrv_qcow = {
     .bdrv_close		= qcow_close,
     .bdrv_reopen_prepare = qcow_reopen_prepare,
     .bdrv_create	= qcow_create,
+    .bdrv_create_new = qcow_create_new,
     .bdrv_has_zero_init     = bdrv_has_zero_init_1,
 
     .bdrv_co_readv          = qcow_co_readv,
@@ -904,6 +1029,7 @@ static BlockDriver bdrv_qcow = {
     .bdrv_get_info          = qcow_get_info,
 
     .create_options = qcow_create_options,
+    .bdrv_create_opts = &qcow_create_opts,
 };
 
 static void bdrv_qcow_init(void)
