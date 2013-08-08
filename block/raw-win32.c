@@ -420,40 +420,7 @@ static int64_t raw_get_allocated_file_size(BlockDriverState *bs)
     return st.st_size;
 }
 
-static int raw_create(const char *filename, QEMUOptionParameter *options)
-{
-    int fd;
-    int64_t total_size = 0;
-
-    /* Read out options */
-    while (options && options->name) {
-        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            total_size = options->value.n / 512;
-        }
-        options++;
-    }
-
-    fd = qemu_open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY,
-                   0644);
-    if (fd < 0)
-        return -EIO;
-    set_sparse(fd);
-    ftruncate(fd, total_size * 512);
-    qemu_close(fd);
-    return 0;
-}
-
-static QEMUOptionParameter raw_create_options[] = {
-    {
-        .name = BLOCK_OPT_SIZE,
-        .type = OPT_SIZE,
-        .help = "Virtual disk size"
-    },
-    { NULL }
-};
-
-
-static int raw_create_new(const char *filename, QemuOpts *opts)
+static int raw_create(const char *filename, QemuOpts *opts)
 {
     int fd;
     int64_t total_size = 0;
@@ -493,7 +460,6 @@ static BlockDriver bdrv_file = {
     .bdrv_file_open	= raw_open,
     .bdrv_close		= raw_close,
     .bdrv_create	= raw_create,
-    .bdrv_create_new = raw_create_new,
     .bdrv_has_zero_init = bdrv_has_zero_init_1,
 
     .bdrv_aio_readv     = raw_aio_readv,
@@ -505,7 +471,6 @@ static BlockDriver bdrv_file = {
     .bdrv_get_allocated_file_size
                         = raw_get_allocated_file_size,
 
-    .create_options = raw_create_options,
     .bdrv_create_opts   = &raw_create_opts,
 };
 
