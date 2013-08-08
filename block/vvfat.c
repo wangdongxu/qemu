@@ -2907,7 +2907,7 @@ static BlockDriver vvfat_write_target = {
 static int enable_write_target(BDRVVVFATState *s)
 {
     BlockDriver *bdrv_qcow;
-    QEMUOptionParameter *options;
+    QemuOpts *opts;
     int ret;
     int size = sector2cluster(s, s->sector_count);
     s->used_clusters = calloc(size, 1);
@@ -2921,11 +2921,10 @@ static int enable_write_target(BDRVVVFATState *s)
     }
 
     bdrv_qcow = bdrv_find_format("qcow");
-    options = parse_option_parameters("", bdrv_qcow->create_options, NULL);
-    set_option_parameter_int(options, BLOCK_OPT_SIZE, s->sector_count * 512);
-    set_option_parameter(options, BLOCK_OPT_BACKING_FILE, "fat:");
-
-    ret = bdrv_create(bdrv_qcow, s->qcow_filename, options);
+    opts = qemu_opts_create_nofail(bdrv_qcow->bdrv_create_opts);
+    qemu_opt_set_number(opts, BLOCK_OPT_SIZE, s->sector_count * 512);
+    qemu_opt_set(opts, BLOCK_OPT_BACKING_FILE, "fat:");
+    ret = bdrv_create(bdrv_qcow, s->qcow_filename, opts);
     if (ret < 0) {
         goto err;
     }

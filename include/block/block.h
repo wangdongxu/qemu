@@ -116,11 +116,8 @@ BlockDriver *bdrv_find_protocol(const char *filename,
 BlockDriver *bdrv_find_format(const char *format_name);
 BlockDriver *bdrv_find_whitelisted_format(const char *format_name,
                                           bool readonly);
-int bdrv_create(BlockDriver *drv, const char* filename,
-    QEMUOptionParameter *options);
-int bdrv_create_file(const char* filename, QEMUOptionParameter *options);
-int bdrv_create_new(BlockDriver *drv, const char* filename, QemuOpts *opts);
-int bdrv_create_file_new(const char *filename, QemuOpts *opts);
+int bdrv_create(BlockDriver *drv, const char* filename, QemuOpts *opts);
+int bdrv_create_file(const char *filename, QemuOpts *opts);
 BlockDriverState *bdrv_new(const char *device_name);
 void bdrv_make_anon(BlockDriverState *bs);
 void bdrv_swap(BlockDriverState *bs_new, BlockDriverState *bs_old);

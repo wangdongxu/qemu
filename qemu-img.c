@@ -231,7 +231,7 @@ static int read_password(char *buf, int buf_size)
 static int print_block_option_help(const char *filename, const char *fmt)
 {
     BlockDriver *drv, *proto_drv;
-    QEMUOptionParameter *create_options = NULL;
+    QemuOptsList *create_opts = NULL;
 
     /* Find driver and parse its options */
     drv = bdrv_find_format(fmt);
@@ -246,12 +246,10 @@ static int print_block_option_help(const char *filename, const char *fmt)
         return 1;
     }
 
-    create_options = append_option_parameters(create_options,
-                                              drv->create_options);
-    create_options = append_option_parameters(create_options,
-                                              proto_drv->create_options);
-    print_option_help(create_options);
-    free_option_parameters(create_options);
+    create_opts = qemu_opts_append(drv->bdrv_create_opts,
+                                   proto_drv->bdrv_create_opts);
+    qemu_opts_print_help(create_opts);
+    qemu_opts_free(create_opts);
     return 0;
 }
 
@@ -303,19 +301,19 @@ fail:
     return NULL;
 }
 
-static int add_old_style_options(const char *fmt, QEMUOptionParameter *list,
+static int add_old_style_options(const char *fmt, QemuOpts *list,
                                  const char *base_filename,
                                  const char *base_fmt)
 {
     if (base_filename) {
-        if (set_option_parameter(list, BLOCK_OPT_BACKING_FILE, base_filename)) {
+        if (qemu_opt_set(list, BLOCK_OPT_BACKING_FILE, base_filename)) {
             error_report("Backing file not supported for file format '%s'",
                          fmt);
             return -1;
         }
     }
     if (base_fmt) {
-        if (set_option_parameter(list, BLOCK_OPT_BACKING_FMT, base_fmt)) {
+        if (qemu_opt_set(list, BLOCK_OPT_BACKING_FMT, base_fmt)) {
             error_report("Backing file format not supported for file "
                          "format '%s'", fmt);
             return -1;
@@ -1126,8 +1124,9 @@ static int img_convert(int argc, char **argv)
     uint8_t * buf = NULL;
     const uint8_t *buf1;
     BlockDriverInfo bdi;
-    QEMUOptionParameter *param = NULL, *create_options = NULL;
-    QEMUOptionParameter *out_baseimg_param;
+    QemuOpts *opts = NULL;
+    QemuOptsList *create_opts = NULL;
+    const char *out_baseimg_param;
     char *options = NULL;
     const char *snapshot_name = NULL;
     float local_progress = 0;
@@ -1271,40 +1270,32 @@ static int img_convert(int argc, char **argv)
         goto out;
     }
 
-    create_options = append_option_parameters(create_options,
-                                              drv->create_options);
-    create_options = append_option_parameters(create_options,
-                                              proto_drv->create_options);
-
-    if (options) {
-        param = parse_option_parameters(options, create_options, param);
-        if (param == NULL) {
-            error_report("Invalid options for file format '%s'.", out_fmt);
-            ret = -1;
-            goto out;
-        }
-    } else {
-        param = parse_option_parameters("", create_options, param);
+    create_opts = qemu_opts_append(drv->bdrv_create_opts,
+                                   proto_drv->bdrv_create_opts);
+    opts = qemu_opts_create_nofail(create_opts);
+    if (options && qemu_opts_do_parse_replace(opts, options, NULL)) {
+        error_report("Invalid options for file format '%s'.", out_fmt);
+        ret = -1;
+        goto out;
     }
-
-    set_option_parameter_int(param, BLOCK_OPT_SIZE, total_sectors * 512);
-    ret = add_old_style_options(out_fmt, param, out_baseimg, NULL);
+    qemu_opt_set_number(opts, BLOCK_OPT_SIZE, total_sectors * 512);
+    ret = add_old_style_options(out_fmt, opts, out_baseimg, NULL);
     if (ret < 0) {
         goto out;
     }
 
     /* Get backing file name if -o backing_file was used */
-    out_baseimg_param = get_option_parameter(param, BLOCK_OPT_BACKING_FILE);
+    out_baseimg_param = qemu_opt_get(opts, BLOCK_OPT_BACKING_FILE);
     if (out_baseimg_param) {
-        out_baseimg = out_baseimg_param->value.s;
+        out_baseimg = out_baseimg_param;
     }
 
     /* Check if compression is supported */
     if (compress) {
-        QEMUOptionParameter *encryption =
-            get_option_parameter(param, BLOCK_OPT_ENCRYPT);
-        QEMUOptionParameter *preallocation =
-            get_option_parameter(param, BLOCK_OPT_PREALLOC);
+        bool encryption =
+            qemu_opt_get_bool(opts, BLOCK_OPT_ENCRYPT, false);
+        const char *preallocation =
+            qemu_opt_get(opts, BLOCK_OPT_PREALLOC);
 
         if (!drv->bdrv_write_compressed) {
             error_report("Compression not supported for this file format");
@@ -1312,15 +1303,15 @@ static int img_convert(int argc, char **argv)
             goto out;
         }
 
-        if (encryption && encryption->value.n) {
+        if (encryption) {
             error_report("Compression and encryption not supported at "
                          "the same time");
             ret = -1;
             goto out;
         }
 
-        if (preallocation && preallocation->value.s
-            && strcmp(preallocation->value.s, "off"))
+        if (preallocation
+            && strcmp(preallocation, "off"))
         {
             error_report("Compression and preallocation not supported at "
                          "the same time");
@@ -1330,7 +1321,7 @@ static int img_convert(int argc, char **argv)
     }
 
     /* Create the new image */
-    ret = bdrv_create(drv, out_filename, param);
+    ret = bdrv_create(drv, out_filename, opts);
     if (ret < 0) {
         if (ret == -ENOTSUP) {
             error_report("Formatting not supported for file format '%s'",
@@ -1534,8 +1525,10 @@ static int img_convert(int argc, char **argv)
     }
 out:
     qemu_progress_end();
-    free_option_parameters(create_options);
-    free_option_parameters(param);
+    qemu_opts_free(create_opts);
+    if (opts) {
+        qemu_opts_del(opts);
+    }
     qemu_vfree(buf);
     if (out_bs) {
         bdrv_delete(out_bs);
