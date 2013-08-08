@@ -1529,6 +1529,92 @@ out:
     return ret;
 }
 
+static int sd_create_new(const char *filename, QemuOpts *opts)
+{
+    int ret = 0;
+    uint32_t vid = 0, base_vid = 0;
+    int64_t vdi_size = 0;
+    char *backing_file = NULL, *buf = NULL;
+    BDRVSheepdogState *s;
+    char vdi[SD_MAX_VDI_LEN], tag[SD_MAX_VDI_TAG_LEN];
+    uint32_t snapid;
+    bool prealloc = false;
+
+    s = g_malloc0(sizeof(BDRVSheepdogState));
+
+    memset(vdi, 0, sizeof(vdi));
+    memset(tag, 0, sizeof(tag));
+    if (strstr(filename, "://")) {
+        ret = sd_parse_uri(s, filename, vdi, &snapid, tag);
+    } else {
+        ret = parse_vdiname(s, filename, vdi, &snapid, tag);
+    }
+    if (ret < 0) {
+        goto out;
+    }
+
+    vdi_size = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
+    backing_file = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
+    buf = qemu_opt_get_del(opts, BLOCK_OPT_PREALLOC);
+    if (!buf || !strcmp(buf, "off")) {
+        prealloc = false;
+    } else if (!strcmp(buf, "full")) {
+        prealloc = true;
+    } else {
+        error_report("Invalid preallocation mode: '%s'", buf);
+        ret = -EINVAL;
+        goto out;
+    }
+    if (vdi_size > SD_MAX_VDI_SIZE) {
+        error_report("too big image size");
+        ret = -EINVAL;
+        goto out;
+    }
+
+    if (backing_file) {
+        BlockDriverState *bs;
+        BDRVSheepdogState *s;
+        BlockDriver *drv;
+
+        /* Currently, only Sheepdog backing image is supported. */
+        drv = bdrv_find_protocol(backing_file, true);
+        if (!drv || strcmp(drv->protocol_name, "sheepdog") != 0) {
+            error_report("backing_file must be a sheepdog image");
+            ret = -EINVAL;
+            goto out;
+        }
+
+        ret = bdrv_file_open(&bs, backing_file, NULL, 0);
+        if (ret < 0) {
+            goto out;
+        }
+
+        s = bs->opaque;
+
+        if (!is_snapshot(&s->inode)) {
+            error_report("cannot clone from a non snapshot vdi");
+            bdrv_delete(bs);
+            ret = -EINVAL;
+            goto out;
+        }
+
+        base_vid = s->inode.vdi_id;
+        bdrv_delete(bs);
+    }
+
+    ret = do_sd_create(s, vdi, vdi_size, base_vid, &vid, 0);
+    if (!prealloc || ret) {
+        goto out;
+    }
+
+    ret = sd_prealloc(filename);
+out:
+    g_free(backing_file);
+    g_free(buf);
+    g_free(s);
+    return ret;
+}
+
 static void sd_close(BlockDriverState *bs)
 {
     BDRVSheepdogState *s = bs->opaque;
@@ -2323,6 +2409,29 @@ static QEMUOptionParameter sd_create_options[] = {
     { NULL }
 };
 
+static QemuOptsList sd_create_opts = {
+    .name = "sheepdog-create-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(sd_create_opts.head),
+    .desc = {
+        {
+            .name = BLOCK_OPT_SIZE,
+            .type = QEMU_OPT_SIZE,
+            .help = "Virtual disk size"
+        },
+        {
+            .name = BLOCK_OPT_BACKING_FILE,
+            .type = QEMU_OPT_STRING,
+            .help = "File name of a base image"
+        },
+        {
+            .name = BLOCK_OPT_PREALLOC,
+            .type = QEMU_OPT_STRING,
+            .help = "Preallocation mode (allowed values: off, full)"
+        },
+        { /* end of list */ }
+    }
+};
+
 static BlockDriver bdrv_sheepdog = {
     .format_name    = "sheepdog",
     .protocol_name  = "sheepdog",
@@ -2330,6 +2439,7 @@ static BlockDriver bdrv_sheepdog = {
     .bdrv_file_open = sd_open,
     .bdrv_close     = sd_close,
     .bdrv_create    = sd_create,
+    .bdrv_create_new = sd_create_new,
     .bdrv_has_zero_init = bdrv_has_zero_init_1,
     .bdrv_getlength = sd_getlength,
     .bdrv_truncate  = sd_truncate,
@@ -2349,6 +2459,7 @@ static BlockDriver bdrv_sheepdog = {
     .bdrv_load_vmstate  = sd_load_vmstate,
 
     .create_options = sd_create_options,
+    .bdrv_create_opts   = &sd_create_opts,
 };
 
 static BlockDriver bdrv_sheepdog_tcp = {
