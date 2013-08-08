@@ -375,58 +375,10 @@ static void coroutine_fn bdrv_create_co_entry(void *opaque)
     CreateCo *cco = opaque;
     assert(cco->drv);
 
-    cco->ret = cco->drv->bdrv_create_new(cco->filename, cco->opts);
+    cco->ret = cco->drv->bdrv_create(cco->filename, cco->opts);
 }
 
-int bdrv_create(BlockDriver *drv, const char* filename,
-    QEMUOptionParameter *options)
-{
-    int ret;
-
-    Coroutine *co;
-    CreateCo cco = {
-        .drv = drv,
-        .filename = g_strdup(filename),
-        .options = options,
-        .ret = NOT_DONE,
-    };
-
-    if (!drv->bdrv_create) {
-        ret = -ENOTSUP;
-        goto out;
-    }
-
-    if (qemu_in_coroutine()) {
-        /* Fast-path if already in coroutine context */
-        bdrv_create_co_entry(&cco);
-    } else {
-        co = qemu_coroutine_create(bdrv_create_co_entry);
-        qemu_coroutine_enter(co, &cco);
-        while (cco.ret == NOT_DONE) {
-            qemu_aio_wait();
-        }
-    }
-
-    ret = cco.ret;
-
-out:
-    g_free(cco.filename);
-    return ret;
-}
-
-int bdrv_create_file(const char* filename, QEMUOptionParameter *options)
-{
-    BlockDriver *drv;
-
-    drv = bdrv_find_protocol(filename, true);
-    if (drv == NULL) {
-        return -ENOENT;
-    }
-
-    return bdrv_create(drv, filename, options);
-}
-
-int bdrv_create_new(BlockDriver *drv, const char* filename, QemuOpts *opts)
+int bdrv_create(BlockDriver *drv, const char* filename, QemuOpts *opts)
 {
     int ret;
 
@@ -464,7 +416,7 @@ out:
     return ret;
 }
 
-int bdrv_create_file_new(const char *filename, QemuOpts *opts)
+int bdrv_create_file(const char *filename, QemuOpts *opts)
 {
     BlockDriver *drv;
 
@@ -473,7 +425,7 @@ int bdrv_create_file_new(const char *filename, QemuOpts *opts)
         return -ENOENT;
     }
 
-    return bdrv_create_new(drv, filename, opts);
+    return bdrv_create(drv, filename, opts);
 }
 
 /*
@@ -1083,7 +1035,7 @@ int bdrv_open(BlockDriverState *bs, const char *filename, QDict *options,
             qemu_opt_set(opts, BLOCK_OPT_BACKING_FMT, drv->format_name);
         }
 
-        ret = bdrv_create_new(bdrv_qcow2, tmp_filename, opts);
+        ret = bdrv_create(bdrv_qcow2, tmp_filename, opts);
         qemu_opts_del(opts);
         if (ret < 0) {
             goto fail;
@@ -4622,7 +4574,7 @@ void bdrv_img_create(const char *filename, const char *fmt,
         qemu_opts_print(opts);
         puts("");
     }
-    ret = bdrv_create_new(drv, filename, opts);
+    ret = bdrv_create(drv, filename, opts);
     if (ret < 0) {
         if (ret == -ENOTSUP) {
             error_setg(errp,"Formatting or formatting option not supported for "
