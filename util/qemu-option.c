@@ -675,6 +675,8 @@ static void qemu_opt_parse(QemuOpt *opt, Error **errp)
         break;
     case QEMU_OPT_SIZE:
         parse_option_size(opt->name, opt->str, &opt->value.uint, errp);
+        g_free((char *)opt->str);
+        opt->str = g_strdup(stringify(opt->value_uint));
         break;
     default:
         abort();
