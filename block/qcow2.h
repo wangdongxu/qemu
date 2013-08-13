@@ -27,6 +27,7 @@
 
 #include "qemu/aes.h"
 #include "block/coroutine.h"
+#include "block/block-cache.h"
 
 //#define DEBUG_ALLOC
 //#define DEBUG_ALLOC2
@@ -100,9 +101,6 @@ typedef struct QCowSnapshot {
     uint64_t vm_clock_nsec;
 } QCowSnapshot;
 
-struct BlockCache;
-typedef struct BlockCache BlockCache;
-
 typedef struct Qcow2UnknownHeaderExtension {
     uint32_t magic;
     uint32_t len;
@@ -168,8 +166,8 @@ typedef struct BDRVQcowState {
     uint64_t l1_table_offset;
     uint64_t *l1_table;
 
-    BlockCache *l2_table_cache;
-    BlockCache *refcount_block_cache;
+    BlockCache  *l2_table_cache;
+    BlockCache  *refcount_block_cache;
 
     uint8_t *cluster_cache;
     uint8_t *cluster_data;
@@ -417,21 +415,4 @@ int qcow2_snapshot_load_tmp(BlockDriverState *bs, const char *snapshot_name);
 
 void qcow2_free_snapshots(BlockDriverState *bs);
 int qcow2_read_snapshots(BlockDriverState *bs);
-
-/* qcow2-cache.c functions */
-BlockCache *block_cache_create(BlockDriverState *bs, int num_tables);
-int block_cache_destroy(BlockDriverState *bs, BlockCache *c);
-
-void block_cache_entry_mark_dirty(BlockCache *c, void *table);
-int block_cache_flush(BlockDriverState *bs, BlockCache *c);
-int block_cache_set_dependency(BlockDriverState *bs, BlockCache *c,
-    BlockCache *dependency);
-void block_cache_depends_on_flush(BlockCache *c);
-
-int block_cache_get(BlockDriverState *bs, BlockCache *c, uint64_t offset,
-    void **table);
-int block_cache_get_empty(BlockDriverState *bs, BlockCache *c, uint64_t offset,
-    void **table);
-int block_cache_put(BlockDriverState *bs, BlockCache *c, void **table);
-
 #endif

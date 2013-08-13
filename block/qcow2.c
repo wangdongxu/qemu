@@ -470,8 +470,11 @@ static int qcow2_open(BlockDriverState *bs, QDict *options, int flags)
     }
 
     /* alloc L2 table/refcount block cache */
-    s->l2_table_cache = block_cache_create(bs, L2_CACHE_SIZE);
-    s->refcount_block_cache = block_cache_create(bs, REFCOUNT_CACHE_SIZE);
+    s->l2_table_cache = block_cache_create(bs, L2_CACHE_SIZE,
+                                           s->cluster_size, BLOCK_TABLE_L2);
+    s->refcount_block_cache = block_cache_create(bs, REFCOUNT_CACHE_SIZE,
+                                                 s->cluster_size,
+                                                 BLOCK_TABLE_REF);
 
     s->cluster_cache = g_malloc(s->cluster_size);
     /* one more sector for decompressed data alignment */
