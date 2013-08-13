@@ -267,6 +267,8 @@ static void pc_init_pci_1_4(QEMUMachineInitArgs *args)
     x86_cpu_compat_set_features("Westmere", FEAT_1_ECX, 0, CPUID_EXT_PCLMULQDQ);
     has_pci_info = false;
     pc_init_pci(args);
+    x86_cpu_compat_set_features("Westmere", FEAT_1_ECX, 0, CPUID_EXT_PCLMULQDQ);
+    pc_init_pci_1_5(args);
 }
 
 static void pc_init_pci_1_3(QEMUMachineInitArgs *args)
