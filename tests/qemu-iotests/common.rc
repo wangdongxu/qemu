@@ -116,6 +116,16 @@ _make_test_img()
     fi
     if [ \( "$IMGFMT" = "qcow2" -o "$IMGFMT" = "qed" \) -a -n "$CLUSTER_SIZE" ]; then
         optstr=$(_optstr_add "$optstr" "cluster_size=$CLUSTER_SIZE")
+    elif [ "$IMGFMT" = "add-cow" ]; then
+        local IMG="$TEST_IMG"".raw"
+        if [ "$1" = "-b" ]; then
+            IMG="$IMG"".b"
+            $QEMU_IMG create -f raw $IMG $image_size>/dev/null
+            extra_img_options="-o image_file=$IMG $extra_img_options"
+        else
+            $QEMU_IMG create -f raw $IMG $image_size>/dev/null
+            extra_img_options="-o image_file=$IMG"
+        fi
     fi
 
     if [ -n "$optstr" ]; then
@@ -136,7 +146,8 @@ _make_test_img()
             -e "s# zeroed_grain=\\(on\\|off\\)##g" \
             -e "s# subformat='[^']*'##g" \
             -e "s# adapter_type='[^']*'##g" \
-            -e "s# lazy_refcounts=\\(on\\|off\\)##g"
+            -e "s# lazy_refcounts=\\(on\\|off\\)##g" \
+            -e "s# image_file='[^']*'##g"
 
     # Start an NBD server on the image file, which is what we'll be talking to
     if [ $IMGPROTO = "nbd" ]; then
@@ -158,6 +169,8 @@ _cleanup_test_img()
             rm -f $TEST_DIR/t.$IMGFMT
             rm -f $TEST_DIR/t.$IMGFMT.orig
             rm -f $TEST_DIR/t.$IMGFMT.base
+            rm -f $TEST_DIR/t.$IMGFMT.raw
+            rm -f $TEST_DIR/t.$IMGFMT.raw.b
             ;;
 
         rbd)
