@@ -513,13 +513,13 @@ qcow2_l2_allocate_write_l2(void *bs, int l1_index) "bs %p l1_index %d"
 qcow2_l2_allocate_write_l1(void *bs, int l1_index) "bs %p l1_index %d"
 qcow2_l2_allocate_done(void *bs, int l1_index, int ret) "bs %p l1_index %d ret %d"
 
-# block/qcow2-cache.c
-qcow2_cache_get(void *co, int c, uint64_t offset, bool read_from_disk) "co %p is_l2_cache %d offset %" PRIx64 " read_from_disk %d"
-qcow2_cache_get_replace_entry(void *co, int c, int i) "co %p is_l2_cache %d index %d"
-qcow2_cache_get_read(void *co, int c, int i) "co %p is_l2_cache %d index %d"
-qcow2_cache_get_done(void *co, int c, int i) "co %p is_l2_cache %d index %d"
-qcow2_cache_flush(void *co, int c) "co %p is_l2_cache %d"
-qcow2_cache_entry_flush(void *co, int c, int i) "co %p is_l2_cache %d index %d"
+# block/block-cache.c
+block_cache_get(void *co, int c, uint64_t offset, bool read_from_disk) "co %p is_l2_cache %d offset %" PRIx64 " read_from_disk %d"
+block_cache_get_replace_entry(void *co, int c, int i) "co %p is_l2_cache %d index %d"
+block_cache_get_read(void *co, int c, int i) "co %p is_l2_cache %d index %d"
+block_cache_get_done(void *co, int c, int i) "co %p is_l2_cache %d index %d"
+block_cache_flush(void *co, int c) "co %p is_l2_cache %d"
+block_cache_entry_flush(void *co, int c, int i) "co %p is_l2_cache %d index %d"
 
 # block/qed-l2-cache.c
 qed_alloc_l2_cache_entry(void *l2_cache, void *entry) "l2_cache %p entry %p"
