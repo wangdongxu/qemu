@@ -190,7 +190,7 @@ static void bdrv_io_limits_intercept(BlockDriverState *bs,
 }
 
 /* check if the path starts with "<protocol>:" */
-static int path_has_protocol(const char *path)
+int path_has_protocol(const char *path)
 {
     const char *p;
 
